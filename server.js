@@ -14,6 +14,8 @@ setInterval(()=>{if(dirty){dirty=0;const t=JSON.stringify(db,function(k,v){retur
 const ph=(p,s)=>cr.scryptSync(p,s,32).toString('hex');
 const J=(r,c,o)=>{r.writeHead(c,{'content-type':'application/json','access-control-allow-origin':'*','access-control-allow-headers':'content-type,authorization','access-control-allow-methods':'GET,POST,OPTIONS'});r.end(JSON.stringify(o))};
 const ER=(r,c,e)=>J(r,c,{e});
+const flush=()=>{const t=JSON.stringify(db,function(k,v){return k==='b'&&MK.includes(this.k)?undefined:v});try{fs.writeFileSync(FILE,t)}catch{}return RU?Promise.race([rcmd(['SET','astra-db',t]),new Promise(r=>setTimeout(r,2500))]).catch(()=>{}):Promise.resolve()};
+for(const sg of['SIGTERM','SIGINT'])process.on(sg,()=>flush().finally(()=>process.exit(0)));
 const hits={};setInterval(()=>{for(const k in hits)delete hits[k]},60000);
 const RL=['free','go50','go75','go250','y1','y2'];
 const pub=u=>({id:u.id,name:u.name,avatar:u.avatar,status:u.status,role:OWN.includes(u.email)?'owner':RL.includes((u.data||{}).plan)?u.data.plan:'free'});
@@ -76,7 +78,7 @@ const capMedia=L=>{const m=L.filter(x=>MK.includes(x.k));if(m.length>30)L.splice
 function h(q,r,b){
  const[p,qs]=q.url.split('?'),P=new URLSearchParams(qs||''),S=p.split('/').filter(Boolean),c=S[1],m=q.method;
  if(S[0]!=='api')return ER(r,404,'Tidak ditemukan');
- if(c==='ping')return J(r,200,{ok:1,v:5});
+ if(c==='ping')return J(r,200,{ok:1,v:6});
  if(c==='register'||c==='login'){
   const em=String(b.email||'').trim().toLowerCase(),pw=String(b.pass||'');
   if(!/^\S+@\S+\.\S+$/.test(em)||pw.length<6||pw.length>200)return ER(r,400,'Email atau password tidak valid (password minimal 6 karakter)');

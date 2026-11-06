@@ -18,8 +18,11 @@ const flush=()=>{const t=JSON.stringify(db,function(k,v){return k==='b'&&MK.incl
 for(const sg of['SIGTERM','SIGINT'])process.on(sg,()=>flush().finally(()=>process.exit(0)));
 const hits={};setInterval(()=>{for(const k in hits)delete hits[k]},60000);
 const RL=['free','go50','go75','go250','y1','y2'];
-const pub=u=>({id:u.id,name:u.name,avatar:u.avatar,status:u.status,role:OWN.includes(u.email)?'owner':RL.includes((u.data||{}).plan)?u.data.plan:'free'});
-const me=u=>({...pub(u),email:u.email,bg:u.bg,wall:u.wall,fx:u.fx,data:u.data});
+/* Akses admin disimpan di server (u.adm), tidak bisa dipalsukan lewat sinkron data. Hanya hash kode yang disimpan di sini. */
+const sha=s=>cr.createHash('sha256').update(s).digest('hex'),OWH='c8d8389a2310ceef7fae2fdd36927d583e45b854d42943b5b6e6a07b02729564',VIPH=new Set(["7b153f87a01031daa0c15f626f571de239879eb9def69f6bc90950c1bcca934c", "4bef8465249b0e3c62eebc7364de380231a9357aaeacde3a14e6458d33814709", "52c5d30cb54bb549a4b29e6c1ab0bfa9f19777c23fd28206f6b7445a91b9eae7", "b4cc94adfbb3e091ca801ec1973c7697e51fd9994381300c934e212a42ddf267", "08be2fac21dd2f777d8421f822eedc4d841f7647d07b59491f989f38356c7a1c"]);
+const isRoot=u=>OWN.includes(u.email)||u.adm==='root',isAdm=u=>isRoot(u)||u.adm==='vip';
+const pub=u=>({id:u.id,name:u.name,avatar:u.avatar,status:u.status,role:isAdm(u)?'owner':RL.includes((u.data||{}).plan)?u.data.plan:'free'});
+const me=u=>({...pub(u),adm:isRoot(u)?'root':u.adm||'',email:u.email,bg:u.bg,wall:u.wall,fx:u.fx,data:u.data});
 const srv=http.createServer((q,r)=>{
  const ip=String(q.headers['x-forwarded-for']||'').split(',')[0].trim()||q.socket.remoteAddress;hits[ip]=(hits[ip]||0)+1;
  if(q.method==='OPTIONS')return J(r,204,{});
@@ -49,9 +52,10 @@ function mod(t){
 function push(m){db.com.push(m);capMedia(db.com);if(db.com.length>300)db.com.splice(0,db.com.length-300);sv();cast({t:'m',m,u:{bot:BOT,[m.u]:db.users[m.u]?pub(db.users[m.u]):BOT}})}
 const say=b=>push({i:Date.now()+Math.random(),t:Date.now(),u:'bot',k:'bot',b});
 function postCom(u,k,b,nm){
- if(u.ban)return'Akunmu di-BAN dari komunitas karena melanggar ketentuan';
- const n=Date.now();u.rt=(u.rt||[]).filter(x=>n-x<5000);if(u.rt.push(n)>5)return'Pelan-pelan, kamu terdeteksi spam';
- {const v=k==='text'?mod(b):(nm&&BAD.test(nm)?['ban','Nama file berisi konten judi/ilegal']:null);if(v){if(v[0]==='ban')u.ban=1;else if((u.st=(u.st||0)+1)>=3)u.ban=1;
+ const adm=isAdm(u);
+ if(u.ban&&!isRoot(u))return'Akunmu di-BAN dari komunitas karena melanggar ketentuan';
+ const n=Date.now();u.rt=(u.rt||[]).filter(x=>n-x<5000);if(!adm&&u.rt.push(n)>5)return'Pelan-pelan, kamu terdeteksi spam';
+ {const v=adm?null:k==='text'?mod(b):(nm&&BAD.test(nm)?['ban','Nama file berisi konten judi/ilegal']:null);if(v){if(v[0]==='ban')u.ban=1;else if((u.st=(u.st||0)+1)>=3)u.ban=1;
   say(`🛡️ Pesan ${u.name} dihapus: ${v[1]}. ${u.ban?u.name+' telah di-BAN dari komunitas.':'Peringatan '+u.st+'/3.'}`);sv();return v[1]+(u.ban?' (kamu di-BAN)':'')}}
  push({i:Date.now()+Math.random(),t:Date.now(),u:u.id,k,b,n:nm});return''}
 srv.on('upgrade',(q,sock)=>{
@@ -82,7 +86,7 @@ const capMedia=L=>{let m=L.filter(x=>MK.includes(x.k)),tot=m.reduce((a,x)=>a+(x.
 function h(q,r,b){
  const[p,qs]=q.url.split('?'),P=new URLSearchParams(qs||''),S=p.split('/').filter(Boolean),c=S[1],m=q.method;
  if(S[0]!=='api')return ER(r,404,'Tidak ditemukan');
- if(c==='ping')return J(r,200,{ok:1,v:8});
+ if(c==='ping')return J(r,200,{ok:1,v:9});
  if(c==='register'||c==='login'){
   const em=String(b.email||'').trim().toLowerCase(),pw=String(b.pass||'');
   if(!/^\S+@\S+\.\S+$/.test(em)||pw.length<6||pw.length>200)return ER(r,400,'Email atau password tidak valid (password minimal 6 karakter)');
@@ -97,6 +101,22 @@ function h(q,r,b){
  const k=db.tok[(q.headers.authorization||'').slice(7)],u=k&&db.users[k.id];
  if(!u||k.ep!==u.ep)return ER(r,401,'Sesi habis, silakan masuk lagi');
  if(c==='me')return J(r,200,me(u));
+ /* ===== ADMIN ===== */
+ if(c==='admin'&&m==='POST'){
+  const a=S.slice(2).join('/');
+  if(a==='redeem'){
+   const n=Date.now();u.ra=(u.ra||[]).filter(t=>n-t<6e5);if(u.ra.length>=10)return ER(r,429,'Terlalu banyak percobaan, tunggu beberapa menit');u.ra.push(n);
+   const code=String(b.code||'').trim();if(!code||code.length>120)return ER(r,400,'Kode tidak valid');
+   if(sha('astra-owner-v1|'+code)===OWH){u.adm='root';sv();return J(r,200,{ok:1,adm:'root'})}
+   const hv=sha('astra-saldo-v1|'+code.toUpperCase());
+   if(VIPH.has(hv)){db.vip=db.vip||{};const o=db.vip[hv];if(o&&o!==u.id&&db.users[o])return ER(r,409,'Kode ini sudah dipakai akun lain');db.vip[hv]=u.id;if(u.adm!=='root')u.adm='vip';sv();return J(r,200,{ok:1,adm:u.adm})}
+   return ER(r,400,'Kode tidak valid')}
+  if(!isRoot(u))return ER(r,403,'Akses ditolak');
+  const t=db.users[String(b.id)];
+  if(a==='ban'){if(!t)return ER(r,404,'ID tidak ditemukan');if(isRoot(t))return ER(r,403,'Akun Owner tidak bisa di-ban');t.ban=b.on?1:0;if(!b.on)t.st=0;sv();say(b.on?'🛡️ '+t.name+' di-BAN dari komunitas oleh Owner.':'✅ Ban '+t.name+' dibuka oleh Owner.');return J(r,200,{ok:1,ban:!!t.ban})}
+  if(a==='clear'){db.com=[];sv();cast({t:'clear',day:db.cday,force:1});say('🧹 Chat komunitas direset oleh Owner.');return J(r,200,{ok:1})}
+  if(a==='status/del'){if(!t)return ER(r,404,'ID tidak ditemukan');t.stat=null;sv();return J(r,200,{ok:1})}
+  return ER(r,404,'Tidak ditemukan')}
  if(c==='profile'&&m==='POST'){
   if(b.name!=null){const n=String(b.name).trim();if(n.length<1||n.length>24)return ER(r,400,'Nama 1-24 karakter');u.name=n}
   for(const[f,l]of[['avatar',4e5],['bg',6e5],['wall',6e5],['status',80],['fx',20]])if(b[f]!=null){if(!ok(b[f],l))return ER(r,413,'Data '+f+' terlalu besar');u[f]=b[f]}
@@ -126,7 +146,7 @@ function h(q,r,b){
   const id=+b.i,o=c==='dm'?S[2]:null;if(!isFinite(id))return ER(r,400,'ID pesan tidak valid');
   let L,key;if(c==='com')L=db.com;else{if(!db.users[o])return ER(r,404,'ID tidak ditemukan');key=[u.id,o].sort().join('-');L=db.dm[key]||[]}
   const ix=L.findIndex(x=>x.i===id);if(ix<0)return J(r,200,{ok:1,gone:1});
-  const x=L[ix];if(x.u!==u.id&&!(c==='com'&&OWN.includes(u.email)))return ER(r,403,'Kamu hanya bisa menghapus pesanmu sendiri');
+  const x=L[ix];if(x.u!==u.id&&!(c==='com'&&isRoot(u)))return ER(r,403,'Kamu hanya bisa menghapus pesanmu sendiri');
   L.splice(ix,1);sv();
   if(c==='com')cast({t:'del',i:id});else castU([u.id,o],{t:'del',p:key,i:id});
   return J(r,200,{ok:1})}

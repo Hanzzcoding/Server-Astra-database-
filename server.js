@@ -31,7 +31,7 @@ const srv=http.createServer((q,r)=>{
 
 /* ===== Bot keamanan + WebSocket ===== */
 const BOT={id:'bot',name:'Bot Keamanan ASTRA',avatar:'',status:'Pemantau 24 jam',role:'owner'};
-const TOS='📜 Ketentuan Layanan Komunitas ASTRA Live Chat\n1. Dilarang membagikan kode program.\n2. Dilarang mengirim link tidak jelas atau penipuan. Hanya link tepercaya (TikTok, Google, YouTube, dll).\n3. Situs judi, ilegal, atau haram = langsung di-BAN.\n4. Dilarang spam.\n5. Semua chat komunitas (pesan dan stiker) direset otomatis setiap pukul 00.00 WIB.\nBot keamanan memantau semua obrolan 24 jam secara real-time.';
+const TOS='📜 Ketentuan Layanan Komunitas ASTRA Live Chat\n1. Dilarang membagikan kode program.\n2. Dilarang mengirim link tidak jelas atau penipuan. Hanya link tepercaya (TikTok, Google, YouTube, dll).\n3. Situs judi, ilegal, atau haram = langsung di-BAN.\n4. Dilarang spam.\n5. Semua chat komunitas (pesan, foto, dan stiker) direset otomatis setiap 2 jam sekali (00.00, 02.00, 04.00, dst WIB). Chat pribadi dan akunmu tidak ikut direset.\n6. Kamu bisa menghapus pesanmu sendiri dengan menekan pesan lalu pilih Hapus.\nBot keamanan memantau semua obrolan 24 jam secara real-time.';
 const OKD=['tiktok.com','google.com','youtube.com','youtu.be','instagram.com','facebook.com','wa.me','whatsapp.com','github.com','wikipedia.org','x.com','twitter.com','spotify.com','telegram.org','t.me'];
 const BAD=/\b(slot\s?(gacor|online|maxwin|dana)|rtp\s?slot|togel|judi\s?(online|bola|slot)|sbobet|casino|maxwin|bandar\s?(togel|judi|bola)|pinjol|taruhan|bet\s?88|situs\s?(judi|slot)|bokep)\b/i;
 const CODE=/```|<\/?(script|html|div|body)\b|function\s*\w*\s*\(|\b(const|let|var)\s+\w+\s*=|import\s+.+\s+from|#include|console\.log|document\.\w|def\s+\w+\(|public\s+static|SELECT\s.+\sFROM|=>\s*\{/i;
@@ -67,10 +67,13 @@ srv.on('upgrade',(q,sock)=>{
   if(op===1&&c.r==='com'){try{const m=JSON.parse(pl.toString());if(!valid(m.k,m.b,m.n)){wsend(c,{t:'warn',b:'Pesan/file tidak valid atau terlalu besar'});continue}const e=postCom(u,m.k,m.b,m.n);if(e)wsend(c,{t:'warn',b:e})}catch{}}}});
  sock.on('close',()=>clients.delete(c));sock.on('error',()=>clients.delete(c))});
 setInterval(()=>clients.forEach(c=>{try{c.sock.write(Buffer.from([0x89,0]))}catch{}}),25000);
-/* reset harian chat komunitas, tiap 00.00 WIB */
-const wib=()=>new Date(Date.now()+7*36e5).toISOString().slice(0,10);
-function reset(){const d=wib();if(db.cday===d)return;const first=!db.cday;db.cday=d;if(first){sv();return}db.com=[];sv();cast({t:'clear',day:d});say('🧹 Chat komunitas sudah direset otomatis (00.00 WIB) supaya server tetap ringan. Selamat hari baru!')}
+/* reset chat komunitas tiap 2 jam sekali (batas genap WIB: 00.00, 02.00, ...). Hanya komunitas; akun, chat pribadi, dan pengaturan tidak disentuh */
+const wib=()=>String(Math.floor((Date.now()+7*36e5)/72e5));
+function reset(){const d=wib();if(db.cday===d)return;const first=!db.cday;db.cday=d;if(first){sv();return}db.com=[];sv();cast({t:'clear',day:d});say('🧹 Chat komunitas sudah direset otomatis (tiap 2 jam sekali) supaya server tetap ringan.')}
 reset();setInterval(reset,30000);
+/* status otomatis hilang setelah 24 jam, dibuang dari penyimpanan supaya tidak menumpuk */
+function purgeStat(){let ch=0;for(const k in db.users){const s=db.users[k].stat;if(s&&Date.now()-s.t>864e5){db.users[k].stat=null;ch=1}}if(ch)sv()}
+purgeStat();setInterval(purgeStat,6e5);
 const ok=(s,n)=>typeof s==='string'&&s.length<=n;
 const KINDS={text:1e3,stk:3e5,img:9e5,vid:2e6,file:14e5},DURL=/^data:[a-z]+\/[\w.+-]+(;[\w=.-]+)*;base64,[A-Za-z0-9+\/=]+$/;
 const valid=(k,b,n)=>KINDS[k]&&b&&ok(b,KINDS[k])&&(k==='text'||DURL.test(b)&&(k==='file'||b.startsWith(k==='vid'?'data:video/':'data:image/')))&&(n==null||ok(n,120))&&!/\.(exe|apk|bat|cmd|js|vbs|scr|msi|jar|sh)$/i.test(n||'');
@@ -78,7 +81,7 @@ const capMedia=L=>{const m=L.filter(x=>MK.includes(x.k));if(m.length>30)L.splice
 function h(q,r,b){
  const[p,qs]=q.url.split('?'),P=new URLSearchParams(qs||''),S=p.split('/').filter(Boolean),c=S[1],m=q.method;
  if(S[0]!=='api')return ER(r,404,'Tidak ditemukan');
- if(c==='ping')return J(r,200,{ok:1,v:6});
+ if(c==='ping')return J(r,200,{ok:1,v:7});
  if(c==='register'||c==='login'){
   const em=String(b.email||'').trim().toLowerCase(),pw=String(b.pass||'');
   if(!/^\S+@\S+\.\S+$/.test(em)||pw.length<6||pw.length>200)return ER(r,400,'Email atau password tidak valid (password minimal 6 karakter)');
@@ -117,6 +120,15 @@ function h(q,r,b){
  if(c==='unfriend'&&m==='POST'){const x=db.users[String(b.id)];u.fr=u.fr.filter(i=>i!==String(b.id));if(x)x.fr=x.fr.filter(i=>i!==u.id);sv();return J(r,200,{ok:1})}
  if(c==='chats')return J(r,200,u.fr.map(i=>db.users[i]).filter(Boolean).map(x=>{const L=db.dm[[u.id,x.id].sort().join('-')]||[],l=L[L.length-1],rd=(u.rd||{})[x.id]||0;const pv=!l?'':l.k==='text'?String(l.b).slice(0,60):l.k==='img'?'📷 Foto':l.k==='vid'?'🎥 Video':l.k==='stk'?'🌟 Stiker':'📎 '+(l.n||'File');return{u:pub(x),p:pv,t:l?l.t:0,me:l?l.u===u.id:false,un:L.filter(m=>m.u===x.id&&m.t>rd).length}}).sort((a,b)=>b.t-a.t))
  if(c==='friends')return J(r,200,u.fr.map(i=>db.users[i]).filter(Boolean).map(pub));
+ /* hapus pesan: POST /api/com/del atau /api/dm/<id>/del  body {i} */
+ if(m==='POST'&&(c==='com'&&S[2]==='del'||c==='dm'&&S[3]==='del')){
+  const id=+b.i,o=c==='dm'?S[2]:null;if(!isFinite(id))return ER(r,400,'ID pesan tidak valid');
+  let L,key;if(c==='com')L=db.com;else{if(!db.users[o])return ER(r,404,'ID tidak ditemukan');key=[u.id,o].sort().join('-');L=db.dm[key]||[]}
+  const ix=L.findIndex(x=>x.i===id);if(ix<0)return J(r,200,{ok:1,gone:1});
+  const x=L[ix];if(x.u!==u.id&&!(c==='com'&&OWN.includes(u.email)))return ER(r,403,'Kamu hanya bisa menghapus pesanmu sendiri');
+  L.splice(ix,1);sv();
+  if(c==='com')cast({t:'del',i:id});else castU([u.id,o],{t:'del',p:key,i:id});
+  return J(r,200,{ok:1})}
  if(c==='com'||c==='dm'){
   let L;if(c==='com')L=db.com;else{const o=S[2];if(!db.users[o])return ER(r,404,'ID tidak ditemukan');if(!u.fr.includes(o))return ER(r,403,'Tambahkan dulu sebagai teman untuk chat pribadi');L=db.dm[[u.id,o].sort().join('-')]||=[]}
   if(m==='POST'){
@@ -125,7 +137,7 @@ function h(q,r,b){
   }
   if(c==='dm')(u.rd||={})[S[2]]=Date.now();
   const s=+P.get('since')||0,ms=L.filter(x=>x.t>s),us={};ms.forEach(x=>us[x.u]=pub(db.users[x.u]||{id:x.u,name:'?',role:'free'}));
-  us.bot=BOT;return J(r,200,{m:ms,u:us,tos:c==='com'&&!s?TOS:undefined,day:c==='com'?db.cday:undefined});
+  us.bot=BOT;return J(r,200,{m:ms,u:us,ids:L.map(x=>x.i),now:Date.now(),tos:c==='com'&&!s?TOS:undefined,day:c==='com'?db.cday:undefined});
  }
  ER(r,404,'Tidak ditemukan');
 }

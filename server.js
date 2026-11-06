@@ -21,10 +21,10 @@ const RL=['free','go50','go75','go250','y1','y2'];
 const pub=u=>({id:u.id,name:u.name,avatar:u.avatar,status:u.status,role:OWN.includes(u.email)?'owner':RL.includes((u.data||{}).plan)?u.data.plan:'free'});
 const me=u=>({...pub(u),email:u.email,bg:u.bg,wall:u.wall,fx:u.fx,data:u.data});
 const srv=http.createServer((q,r)=>{
- const ip=q.socket.remoteAddress;hits[ip]=(hits[ip]||0)+1;
+ const ip=String(q.headers['x-forwarded-for']||'').split(',')[0].trim()||q.socket.remoteAddress;hits[ip]=(hits[ip]||0)+1;
  if(q.method==='OPTIONS')return J(r,204,{});
- if(hits[ip]>300)return ER(r,429,'Terlalu banyak permintaan, tunggu sebentar');
- let b='',big=0;q.on('data',d=>{b+=d;if(b.length>3e6&&!big){big=1;ER(r,413,'Data terlalu besar')}});
+ if(hits[ip]>600)return ER(r,429,'Terlalu banyak permintaan, tunggu sebentar');
+ let b='',big=0;q.on('data',d=>{if(big)return;b+=d;if(b.length>4e6){big=1;b='';ER(r,413,'Ukuran file terlalu besar untuk dikirim')}});
  q.on('end',()=>{if(big)return;try{h(q,r,b?JSON.parse(b):{})}catch(e){console.error(e);ER(r,500,'Kesalahan di server')}})
 });(async()=>{if(RU)try{const r=await rcmd(['GET','astra-db']);if(r.result){db=JSON.parse(r.result);clean()}console.log('Data dimuat dari Upstash')}catch(e){console.error('Gagal memuat Upstash',e.message)}
  srv.listen(PORT,()=>console.log('ASTRA server di port '+PORT))})();
@@ -61,10 +61,10 @@ srv.on('upgrade',(q,sock)=>{
  const c={sock,u,r:U.searchParams.get('r')};clients.add(c);if(c.r==='com'){if(!u.tos){u.tos=1;sv();say('👋 Selamat datang '+u.name+' di Komunitas ASTRA Live Chat!\n\n'+TOS)}wsend(c,{t:'tos',b:TOS})}let buf=Buffer.alloc(0);
  sock.on('data',d=>{buf=Buffer.concat([buf,d]);while(buf.length>=2){
   let o=buf[1]&127,off=2;if(o===126){if(buf.length<4)break;o=buf.readUInt16BE(2);off=4}else if(o===127){if(buf.length<10)break;o=buf.readUInt32BE(6);off=10}
-  if(o>3e6){sock.destroy();return}const msk=buf[1]&128?buf.slice(off,off+4):null;if(msk)off+=4;if(buf.length<off+o)break;
+  if(o>4e6){wsend(c,{t:'warn',b:'File terlalu besar'});sock.destroy();return}const msk=buf[1]&128?buf.slice(off,off+4):null;if(msk)off+=4;if(buf.length<off+o)break;
   const op=buf[0]&15;let pl=buf.slice(off,off+o);buf=buf.slice(off+o);if(msk)pl=Buffer.from(pl.map((x,i)=>x^msk[i%4]));
   if(op===8){sock.end();return}
-  if(op===1&&c.r==='com'){try{const m=JSON.parse(pl.toString());if(!valid(m.k,m.b,m.n)){wsend(c,{t:'warn',b:'Pesan/file tidak valid atau terlalu besar'});continue}const e=postCom(u,m.k,m.b,m.n);if(e)wsend(c,{t:'warn',b:e})}catch{}}}});
+  if(op===1&&c.r==='com'){try{const m=JSON.parse(pl.toString());if(!valid(m.k,m.b,m.n)){wsend(c,{t:'warn',b:why(m.k,m.b,m.n)});continue}const e=postCom(u,m.k,m.b,m.n);if(e)wsend(c,{t:'warn',b:e})}catch{}}}});
  sock.on('close',()=>clients.delete(c));sock.on('error',()=>clients.delete(c))});
 setInterval(()=>clients.forEach(c=>{try{c.sock.write(Buffer.from([0x89,0]))}catch{}}),25000);
 /* reset chat komunitas tiap 2 jam sekali (batas genap WIB: 00.00, 02.00, ...). Hanya komunitas; akun, chat pribadi, dan pengaturan tidak disentuh */
@@ -75,13 +75,14 @@ reset();setInterval(reset,30000);
 function purgeStat(){let ch=0;for(const k in db.users){const s=db.users[k].stat;if(s&&Date.now()-s.t>864e5){db.users[k].stat=null;ch=1}}if(ch)sv()}
 purgeStat();setInterval(purgeStat,6e5);
 const ok=(s,n)=>typeof s==='string'&&s.length<=n;
-const KINDS={text:1e3,stk:3e5,img:9e5,vid:2e6,file:14e5},DURL=/^data:[a-z]+\/[\w.+-]+(;[\w=.-]+)*;base64,[A-Za-z0-9+\/=]+$/;
+const KINDS={text:1e3,stk:3e5,img:12e5,vid:28e5,file:14e5},DURL=/^data:[a-z]+\/[\w.+-]+(;[\w=.-]+)*;base64,[A-Za-z0-9+\/=]+$/;
+const why=(k,b,n)=>!KINDS[k]?'Jenis pesan tidak dikenal':!b?'Pesan kosong':!ok(b,KINDS[k])?'Ukuran terlalu besar (maks '+(KINDS[k]/1e6*.75).toFixed(1)+' MB)':k!=='text'&&!DURL.test(b)?'Format file tidak valid':(k==='img'||k==='stk')&&!b.startsWith('data:image/')?'File bukan gambar':k==='vid'&&!b.startsWith('data:video/')?'File bukan video':/\.(exe|apk|bat|cmd|js|vbs|scr|msi|jar|sh)$/i.test(n||'')?'Jenis file ini diblokir':'Pesan tidak valid';
 const valid=(k,b,n)=>KINDS[k]&&b&&ok(b,KINDS[k])&&(k==='text'||DURL.test(b)&&(k==='file'||b.startsWith(k==='vid'?'data:video/':'data:image/')))&&(n==null||ok(n,120))&&!/\.(exe|apk|bat|cmd|js|vbs|scr|msi|jar|sh)$/i.test(n||'');
-const capMedia=L=>{const m=L.filter(x=>MK.includes(x.k));if(m.length>30)L.splice(L.indexOf(m[0]),1)};
+const capMedia=L=>{let m=L.filter(x=>MK.includes(x.k)),tot=m.reduce((a,x)=>a+(x.b?x.b.length:0),0);while(m.length>30||(tot>25e6&&m.length>1)){tot-=m[0].b?m[0].b.length:0;L.splice(L.indexOf(m[0]),1);m.shift()}};
 function h(q,r,b){
  const[p,qs]=q.url.split('?'),P=new URLSearchParams(qs||''),S=p.split('/').filter(Boolean),c=S[1],m=q.method;
  if(S[0]!=='api')return ER(r,404,'Tidak ditemukan');
- if(c==='ping')return J(r,200,{ok:1,v:7});
+ if(c==='ping')return J(r,200,{ok:1,v:8});
  if(c==='register'||c==='login'){
   const em=String(b.email||'').trim().toLowerCase(),pw=String(b.pass||'');
   if(!/^\S+@\S+\.\S+$/.test(em)||pw.length<6||pw.length>200)return ER(r,400,'Email atau password tidak valid (password minimal 6 karakter)');
@@ -132,7 +133,7 @@ function h(q,r,b){
  if(c==='com'||c==='dm'){
   let L;if(c==='com')L=db.com;else{const o=S[2];if(!db.users[o])return ER(r,404,'ID tidak ditemukan');if(!u.fr.includes(o))return ER(r,403,'Tambahkan dulu sebagai teman untuk chat pribadi');L=db.dm[[u.id,o].sort().join('-')]||=[]}
   if(m==='POST'){
-   if(!valid(b.k,b.b,b.n))return ER(r,400,'Pesan/file tidak valid atau terlalu besar');
+   if(!valid(b.k,b.b,b.n))return ER(r,400,why(b.k,b.b,b.n));
    if(c==='com'){const e=postCom(u,b.k,b.b,b.n);if(e)return ER(r,403,e)}else{const mm={i:Date.now()+Math.random(),t:Date.now(),u:u.id,k:b.k,b:b.b,n:b.n};L.push(mm);capMedia(L);castU([u.id,S[2]],{t:'dm',from:u.id,to:S[2],m:mm,u:{[u.id]:pub(u)}});if(L.length>300)L.splice(0,L.length-300);sv()}
   }
   if(c==='dm')(u.rd||={})[S[2]]=Date.now();

@@ -3,7 +3,7 @@
 const http=require('http'),fs=require('fs'),cr=require('crypto');
 const PORT=process.env.PORT||3000,FILE=process.env.DB||'./astra-db.json',MAXU=+process.env.MAX_USERS||50000;
 const OWN=(process.env.OWNERS||'').toLowerCase().split(',').filter(Boolean);
-const MK=['img','vid','file'];
+const MK=['img','vid','file','aud'];
 let db={users:{},mail:{},tok:{},com:[],dm:{},next:100001};try{db=JSON.parse(fs.readFileSync(FILE))}catch{}
 const MX=()=>{db.vip=db.vip||{};db.used=db.used||{};db.codes=db.codes||{};const n=Date.now();for(const t in db.tok)if(!db.tok[t].c)db.tok[t].c=n};MX();
 const clean=()=>{const f=a=>(a||[]).filter(m=>!MK.includes(m.k)||m.b);db.com=f(db.com);for(const k in db.dm)db.dm[k]=f(db.dm[k])};clean();
@@ -83,36 +83,115 @@ const BAD=/\b(slot\s?(gacor|online|maxwin|dana)|rtp\s?slot|togel|judi\s?(online|
 const CODE=/```|<\/?(script|html|div|body)\b|function\s*\w*\s*\(|\b(const|let|var)\s+\w+\s*=|import\s+.+\s+from|#include|console\.log|document\.\w|def\s+\w+\(|public\s+static|SELECT\s.+\sFROM|=>\s*\{/i;
 const LINK=/(?:https?:\/\/|www\.)\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|id|xyz|top|club|bet|vip|site|online|link|ru|cc|info|shop|live|app|me)\b\S*/gi;
 const clients=new Set();
-const frame=s=>{const p=Buffer.from(s),l=p.length;const h=l<126?Buffer.from([0x81,l]):l<65536?Buffer.from([0x81,126,l>>8,l&255]):Buffer.concat([Buffer.from([0x81,127,0,0,0,0]),Buffer.from([(l>>>24)&255,(l>>>16)&255,(l>>>8)&255,l&255])]);return Buffer.concat([h,p])};
+const frame=(s,op=0x81)=>{const p=Buffer.isBuffer(s)?s:Buffer.from(s),l=p.length;const h=l<126?Buffer.from([op,l]):l<65536?Buffer.from([op,126,l>>8,l&255]):Buffer.concat([Buffer.from([op,127,0,0,0,0]),Buffer.from([(l>>>24)&255,(l>>>16)&255,(l>>>8)&255,l&255])]);return Buffer.concat([h,p])};
 const wsend=(c,o)=>{try{c.sock.write(frame(JSON.stringify(o)))}catch{}};
 const cast=o=>clients.forEach(c=>c.r==='com'&&wsend(c,o));
 const castU=(ids,o)=>clients.forEach(c=>ids.includes(c.u.id)&&wsend(c,o));
 function mod(t){
  if(BAD.test(t))return['ban','Konten judi/ilegal/haram'];
+ {const lw=String(t).toLowerCase();if((db.words||[]).some(w=>lw.includes(w)))return['del','Kata dilarang oleh Owner']}
  for(const l of t.match(LINK)||[]){const hs=l.replace(/^https?:\/\//i,'').replace(/^www\./i,'').split(/[\/?#]/)[0].toLowerCase();if(BAD.test(l)||/\.(bet|vip)$/.test(hs))return['ban','Link situs ilegal/judi'];if(!OKD.some(d=>hs===d||hs.endsWith('.'+d)))return['del','Link tidak dikenal/berpotensi penipuan']}
  if(CODE.test(t))return['del','Dilarang membagikan kode'];
  return null}
 function push(m){db.com.push(m);capMedia(db.com);if(db.com.length>300)db.com.splice(0,db.com.length-300);sv();cast({t:'m',m,u:{bot:BOT,[m.u]:db.users[m.u]?pub(db.users[m.u]):BOT}})}
 const say=b=>push({i:Date.now()+Math.random(),t:Date.now(),u:'bot',k:'bot',b});
+
+/* ===== Katalog gift live: 120 gift, dari Rp500 sampai Rp5.000.000 ===== */
+const GRAW=`Jempol|👍|500;Tepuk Tangan|👏|500;Hati Kecil|❤️|500;Senyum|😊|500;Kopi|☕|1000;Permen|🍬|1000;Es Krim|🍦|1000;Bunga Matahari|🌻|1000;Kue Cubit|🧁|1000;Donat|🍩|1000;Bintang|⭐|1000;Pelangi|🌈|1000;Balon|🎈|1500;Cokelat|🍫|1500;Kupu-kupu|🦋|1500;Gelembung|🫧|1500;Es Teh Manis|🧋|1500;Pizza|🍕|2000;Burger|🍔|2000;Kentang Goreng|🍟|2000;Popcorn|🍿|2000;Tulip|🌷|2000;Kucing Lucu|🐱|2000;Anak Anjing|🐶|2000;Panda|🐼|2000;Api Semangat|🔥|2000;Petir|⚡|2000;Sakura|🌸|2000;Lollipop|🍭|2000;Pita Cantik|🎀|2000;
+Mawar Merah|🌹|2500;Buket Mini|💐|3000;Teddy Bear|🧸|3000;Gitar|🎸|3000;Mikrofon|🎤|3000;Headset|🎧|3500;Kamera|📸|4000;Piala Mini|🏆|5000;Lonceng|🔔|5000;Konfeti|🎊|5000;Kembang Api|🎆|5000;Sparkler|🎇|5000;Hadiah Kecil|🎁|5000;Cincin|💍|6000;Sepatu Roda|🛼|6000;Sepeda|🚲|7000;Skateboard|🛹|7000;Bola Basket|🏀|7500;Bola Sepak|⚽|7500;Dadu|🎲|8000;Joystick|🎮|8000;Piano|🎹|8500;Drum|🥁|9000;Trompet|🎺|9000;Biola|🎻|9000;Lampu Ajaib|🪔|10000;Bola Kristal|🔮|10000;Kompas|🧭|10000;Layang-layang|🪁|10000;Roket Mini|🚀|10000;
+Medali Emas|🥇|15000;Mahkota|👑|20000;Berlian Kecil|💎|20000;Sayap Malaikat|🪽|25000;Unicorn|🦄|25000;Naga Kecil|🐲|30000;Harimau|🐯|30000;Singa|🦁|30000;Elang|🦅|35000;Paus|🐳|35000;Lumba-lumba|🐬|40000;Perahu Layar|⛵|40000;Mobil Sport|🏎️|45000;Motor Balap|🏍️|45000;Helikopter|🚁|50000;Pesawat|✈️|50000;Kapal Pesiar|🛥️|55000;Pantai Pribadi|🏖️|60000;Kastil|🏰|60000;Bulan Sabit|🌙|65000;Komet|☄️|70000;Planet Cincin|🪐|70000;Matahari|🌞|75000;Pohon Emas|🌳|75000;Gunung Es|🏔️|75000;
+Roket Astra|🚀|100000;Satelit|🛰️|100000;Pesta Meriah|🎉|125000;Panggung Teater|🎭|125000;Piala Emas|🏆|150000;Jam Emas|⌚|150000;Tas Mewah|👜|175000;Mobil Mewah|🚘|200000;Yacht|🛳️|200000;Jet Pribadi|🛩️|250000;Menara Astra|🗼|250000;Pulau Pribadi|🏝️|300000;Kota Astra|🏙️|300000;Pegasus|🐎|350000;Merak Kerajaan|🦚|350000;Harta Karun|💰|400000;Peti Koin Emas|🪙|400000;Galaksi|🌌|450000;Aurora|🌠|450000;Istana Kerajaan|🏯|500000;
+Raja Astra|🤴|750000;Ratu Astra|👸|750000;Dewa Petir|🌩️|1000000;Naga Emas|🐉|1000000;Tsunami|🌊|1250000;Gunung Berapi|🌋|1500000;Supernova|💥|1500000;Mesin Waktu|⏳|2000000;Portal Dimensi|🌀|2000000;Bintang Jatuh|💫|2500000;Istana Langit|☁️|3000000;Mahkota Semesta|👑|3500000;Planet Astra|🪐|4000000;Alam Semesta|🌌|4500000;ASTRA LEGEND|💎|5000000`;
+const tierOf=p=>p<2500?1:p<15000?2:p<100000?3:p<750000?4:5;
+const GIFTS=GRAW.replace(/\n/g,'').split(';').map((x,i)=>{const [n,e,p]=x.split('|');return{id:'g'+(i+1),n,e,p:+p,tier:tierOf(+p)}});
+const GMAP=Object.fromEntries(GIFTS.map(g=>[g.id,g]));
+const PTAB={go50:{p:50000,d:30,n:'GO ASTRA Lite'},go75:{p:75000,d:30,n:'GO ASTRA Plus'},go250:{p:250000,d:30,n:'GO ASTRA Pro'},y1:{p:1000000,d:365,n:'GO ASTRA Tahunan'},y2:{p:2000000,d:730,n:'GO ASTRA 2 Tahun'}};
+const alog=(u,a,d)=>{db.alog=db.alog||[];db.alog.unshift({t:Date.now(),by:u.name,a,d:String(d||'').slice(0,140)});if(db.alog.length>150)db.alog.length=150;sv()};
+/* verifikasi langkah ke-2: password akun dicek ulang di server */
+const vpw=(u,vp)=>{const n=Date.now();if(u.vl&&u.vl>n)return'Verifikasi dikunci. Coba lagi '+Math.ceil((u.vl-n)/6e4)+' menit lagi';if(typeof vp!=='string'||!vp||ph(vp,u.salt)!==u.ph){u.vf=(u.vf||0)+1;if(u.vf>=5){u.vf=0;u.vl=n+10*6e4;return'Password salah 5 kali. Verifikasi dikunci 10 menit'}return'Password salah ('+u.vf+'/5)'}u.vf=0;return null};
+const isBanned=u=>{if(!u.ban)return false;if(u.bu&&u.bu<Date.now()){u.ban=0;u.bu=0;u.st=0;sv();return false}return true};
+const hm=t=>new Date(t+7*36e5).toISOString().slice(11,16)+' WIB';
 function postCom(u,k,b,nm){
- const adm=isAdm(u);
- if(u.ban&&!isRoot(u))return'Akunmu di-BAN dari komunitas karena melanggar ketentuan';
- const n=Date.now();u.rt=(u.rt||[]).filter(x=>n-x<5000);if(!adm&&u.rt.push(n)>5)return'Pelan-pelan, kamu terdeteksi spam';
+ const adm=isAdm(u),n=Date.now();
+ if(isBanned(u)&&!isRoot(u))return'Akunmu di-BAN dari komunitas'+(u.bu?' sampai '+hm(u.bu):' karena melanggar ketentuan');
+ if(u.mute&&u.mute>n&&!isRoot(u))return'Kamu di-mute oleh Owner sampai '+hm(u.mute);
+ if(db.lock&&!adm)return'Komunitas sedang dikunci oleh Owner. Hanya Owner yang bisa mengirim pesan.';
+ u.rt=(u.rt||[]).filter(x=>n-x<5000);if(!adm&&u.rt.push(n)>5)return'Pelan-pelan, kamu terdeteksi spam';
+ if(db.slow&&!adm){const w=db.slow*1000-(n-(u.ls||0));if(w>0)return'Mode lambat aktif: tunggu '+Math.ceil(w/1000)+' detik lagi';u.ls=n}
+ if(k==='aud'&&!adm){if(b.length>AUDM)return'Pesan suara member maksimal 30 detik';u.vo=(u.vo||[]).filter(x=>n-x<36e5);if(u.vo.length&&n-u.vo[u.vo.length-1]<20000)return'Tunggu 20 detik sebelum kirim pesan suara lagi';if(u.vo.length>=10)return'Batas pesan suara member 10 per jam. Coba lagi nanti';u.vo.push(n)}
  {const v=adm?null:k==='text'?mod(b):(nm&&BAD.test(nm)?['ban','Nama file berisi konten judi/ilegal']:null);if(v){if(v[0]==='ban')u.ban=1;else if((u.st=(u.st||0)+1)>=3)u.ban=1;
   say(`🛡️ Pesan ${u.name} dihapus: ${v[1]}. ${u.ban?u.name+' telah di-BAN dari komunitas.':'Peringatan '+u.st+'/3.'}`);sv();return v[1]+(u.ban?' (kamu di-BAN)':'')}}
  push({i:Date.now()+Math.random(),t:Date.now(),u:u.id,k,b,n:nm});return''}
+
+/* ===== LIVE STREAMING (hanya Owner utama yang siaran). Video dipancarkan lewat server (relay), tidak disimpan. ===== */
+const CL=Buffer.from([0x1F,0x43,0xB6,0x75]);let live=null;
+const liveV=()=>[...clients].filter(c=>c.r==='live'&&!c.host);
+const lcast=(o,f)=>clients.forEach(c=>c.r==='live'&&(!f||f(c))&&wsend(c,o));
+const wbin=(c,fr)=>{try{if(c.sock.writableLength>4e6){c.sock.destroy();return}c.sock.write(fr)}catch{}};
+const bf=(t,b)=>frame(Buffer.concat([Buffer.from([t]),b]),0x82);
+const topOf=L=>Object.entries(L.top).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([id,v])=>({id,name:(db.users[id]||{}).name||'?',v}));
+const lpub=()=>live&&{on:1,title:live.title,host:live.hn,hid:live.host,t:live.t,v:liveV().length,kind:live.kind,mime:live.mime,cm:live.cm,g:live.gifts,top:topOf(live)};
+function snapSync(){if(!live)return;const n=liveV().filter(c=>c.snap).length;const on=n>0&&live.kind==='webm';if(on!==live.snapOn){live.snapOn=on;clients.forEach(c=>c.host&&wsend(c,{t:'snap',on}))}}
+function liveJoin(c){const u=c.u;
+ if(!live){wsend(c,{t:'end',none:1});setTimeout(()=>{try{c.sock.end()}catch{}},300);return}
+ if(c.host){live.hostGone=0;clients.forEach(o=>{if(o!==c&&o.host){try{o.sock.destroy()}catch{}}});wsend(c,{t:'hello',host:1,live:lpub(),mute:[...live.mute]});live.snapOn=null;snapSync();lcast({t:'resume'},x=>!x.host);return}
+ if(live.kind==='jpg')c.snap=true;
+ wsend(c,{t:'hello',live:lpub(),me:{id:u.id,role:pub(u).role},cmt:live.cmt.slice(-30),snap:!!c.snap});
+ if(live.kind==='webm'&&!c.snap){if(live.init){wbin(c,bf(1,live.init));if(live.cur.length)wbin(c,bf(1,live.cur));c.ready=1}}
+ else if(live.jpg)wbin(c,bf(2,live.jpg));
+ clients.forEach(h=>h.host&&wsend(h,{t:'j',u:{id:u.id,name:u.name,role:pub(u).role}}));snapSync()}
+function liveLeft(c){if(!live)return;if(c.host){if(live)live.hostGone=Date.now();lcast({t:'pause'},x=>!x.host)}else snapSync()}
+function hostBin(buf){if(!live||buf.length<2)return;const t=buf[0],p=buf.slice(1),n=Date.now();
+ if(t===1&&live.kind==='webm'){
+  if(!live.init){live.head=Buffer.concat([live.head||Buffer.alloc(0),p]);const k=live.head.indexOf(CL);if(k>=0){live.init=live.head.slice(0,k);live.cur=live.head.slice(k);live.head=null;
+    liveV().forEach(c=>{if(!c.snap&&!c.ready){wbin(c,bf(1,live.init));wbin(c,bf(1,live.cur));c.ready=1}})}else if(live.head.length>2e6)live.head=null;return}
+  const k=p.indexOf(CL);live.cur=k>=0?p.slice(k):Buffer.concat([live.cur,p]);if(live.cur.length>6e6)live.cur=Buffer.alloc(0);
+  const fr=bf(1,p);liveV().forEach(c=>{if(c.ready&&!c.snap)wbin(c,fr)})}
+ else if(t===2){if(n-live.lj<90)return;live.lj=n;live.jpg=p;const fr=bf(2,p);liveV().forEach(c=>{if(c.snap)wbin(c,fr)})}}
+function liveText(c,m){const u=c.u,n=Date.now();if(!live||!m)return;
+ if(c.host){
+  if(m.t==='meta'){const kind=m.kind==='jpg'?'jpg':'webm';if(m.reset||!live.kind){live.kind=kind;live.mime=String(m.mime||'').slice(0,120);live.init=null;live.cur=Buffer.alloc(0);live.head=null;live.jpg=null;liveV().forEach(v=>{v.ready=0;if(kind==='jpg')v.snap=true});lcast({t:'reinit',kind,mime:live.mime},x=>!x.host);live.snapOn=null;snapSync()}}
+  else if(m.t==='cm'){live.cm=!!m.on;lcast({t:'cm',on:live.cm})}
+  else if(m.t==='title'){live.title=String(m.b||'').slice(0,60)||live.title;lcast({t:'title',b:live.title})}
+  else if(m.t==='c'){const b=String(m.b||'').trim().slice(0,150);if(b)lc(u,b)}
+  return}
+ if(m.t==='c'){const b=String(m.b||'').trim().slice(0,150);if(!b)return;
+  if(!live.cm&&!isRoot(u))return wsend(c,{t:'warn',b:'Komentar sedang dimatikan oleh host'});
+  if(isBanned(u)&&!isRoot(u))return wsend(c,{t:'warn',b:'Akunmu di-BAN'});
+  if(((u.mute&&u.mute>n)||live.mute.has(u.id))&&!isRoot(u))return wsend(c,{t:'warn',b:'Kamu di-mute di live ini'});
+  if(!isAdm(u)){if(n-(c.lc||0)<1200)return wsend(c,{t:'warn',b:'Pelan-pelan ya'});c.lc=n;const v=mod(b);if(v)return wsend(c,{t:'warn',b:'Komentar ditolak: '+v[1]})}
+  lc(u,b)}}
+function lc(u,b){const o={t:'c',id:Date.now()+Math.random(),ts:Date.now(),u:{id:u.id,name:u.name,role:pub(u).role,av:pub(u).av},b};live.cmt.push(o);if(live.cmt.length>60)live.cmt.shift();lcast(o)}
+function endLive(reason){if(!live)return;const L=live;live=null;const sum={title:L.title,dur:Date.now()-L.t,gifts:L.gifts,peak:L.peak,top:topOf(L),reason};
+ db.lastLive={t:L.t,dur:sum.dur,gifts:sum.gifts,peak:sum.peak,title:L.title};sv();
+ clients.forEach(c=>{if(c.r==='live')wsend(c,{t:'end',sum:c.host?sum:{title:L.title,reason}})});
+ setTimeout(()=>clients.forEach(c=>{if(c.r==='live'){try{c.sock.end()}catch{}}}),600);
+ say('⏹️ Live "'+L.title+'" telah selesai. Terima kasih sudah menonton!')}
+setInterval(()=>{if(!live)return;const n=Date.now(),v=liveV().length;live.peak=Math.max(live.peak,v);lcast({t:'v',n:v,g:live.gifts,top:topOf(live)});
+ if(live.hostGone&&n-live.hostGone>45000)endLive('Siaran terputus');else if(!live.hostGone&&!clients.size)endLive('Siaran berhenti');else if(n-live.t>8*36e5)endLive('Durasi maksimum 8 jam tercapai');
+ else if(!live.kind&&n-live.t>120000)endLive('Host tidak memulai siaran')},3000);
 srv.on('upgrade',(q,sock)=>{
  const U=new URL(q.url,'http://x'),k=db.tok[U.searchParams.get('t')],u=k&&db.users[k.id];
  if(U.pathname!=='/ws'||!u||k.ep!==u.ep||!q.headers['sec-websocket-key']){sock.destroy();return}
  sock.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: '+cr.createHash('sha1').update(q.headers['sec-websocket-key']+'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64')+'\r\n\r\n');
- const c={sock,u,r:U.searchParams.get('r')};clients.add(c);if(c.r==='com'){if(!u.tos){u.tos=1;sv();say('👋 Selamat datang '+u.name+' di Komunitas ASTRA Live Chat!\n\n'+TOS)}wsend(c,{t:'tos',b:TOS})}let buf=Buffer.alloc(0);
- sock.on('data',d=>{buf=Buffer.concat([buf,d]);while(buf.length>=2){
-  let o=buf[1]&127,off=2;if(o===126){if(buf.length<4)break;o=buf.readUInt16BE(2);off=4}else if(o===127){if(buf.length<10)break;o=buf.readUInt32BE(6);off=10}
-  if(o>4e6){wsend(c,{t:'warn',b:'File terlalu besar'});sock.destroy();return}const msk=buf[1]&128?buf.slice(off,off+4):null;if(msk)off+=4;if(buf.length<off+o)break;
-  const op=buf[0]&15;let pl=buf.slice(off,off+o);buf=buf.slice(off+o);if(msk)pl=Buffer.from(pl.map((x,i)=>x^msk[i%4]));
+ try{sock.setNoDelay(true)}catch{}
+ const rr=U.searchParams.get('r'),c={sock,u,r:rr};
+ if(rr==='live'){c.host=U.searchParams.get('host')==='1'&&isRoot(u)&&!!live&&live.host===u.id;c.snap=U.searchParams.get('snap')==='1'}
+ clients.add(c);if(c.r==='com'){if(!u.tos){u.tos=1;sv();say('👋 Selamat datang '+u.name+' di Komunitas ASTRA Live Chat!\n\n'+TOS)}wsend(c,{t:'tos',b:TOS})}
+ if(c.r==='live')liveJoin(c);
+ let buf=Buffer.alloc(0),frag=null;const LIM=c.host?16e5:4e6;
+ sock.on('data',d=>{try{buf=Buffer.concat([buf,d]);while(buf.length>=2){
+  const fin=buf[0]&128;let op=buf[0]&15,o=buf[1]&127,off=2;if(o===126){if(buf.length<4)break;o=buf.readUInt16BE(2);off=4}else if(o===127){if(buf.length<10)break;o=buf.readUInt32BE(6);off=10}
+  if(o>LIM){wsend(c,{t:'warn',b:'File terlalu besar'});sock.destroy();return}const msk=buf[1]&128?buf.slice(off,off+4):null;if(msk)off+=4;if(buf.length<off+o)break;
+  let pl=buf.slice(off,off+o);buf=buf.slice(off+o);if(msk)for(let i=0;i<pl.length;i++)pl[i]^=msk[i&3];
+  if(op===0){if(!frag)continue;frag.p.push(pl);frag.n+=pl.length;if(frag.n>LIM){sock.destroy();return}if(!fin)continue;pl=Buffer.concat(frag.p);op=frag.op;frag=null}
+  else if((op===1||op===2)&&!fin){frag={op,p:[pl],n:pl.length};continue}
   if(op===8){sock.end();return}
-  if(op===1&&c.r==='com'){try{const m=JSON.parse(pl.toString());if(!valid(m.k,m.b,m.n)){wsend(c,{t:'warn',b:why(m.k,m.b,m.n)});continue}const e=postCom(u,m.k,m.b,m.n);if(e)wsend(c,{t:'warn',b:e})}catch{}}}});
- sock.on('close',()=>clients.delete(c));sock.on('error',()=>clients.delete(c))});
+  if(op===9){try{sock.write(frame(pl,0x8A))}catch{}continue}
+  if(op===1&&c.r==='com'){try{const m=JSON.parse(pl.toString());if(!valid(m.k,m.b,m.n)){wsend(c,{t:'warn',b:why(m.k,m.b,m.n)});continue}const e=postCom(u,m.k,m.b,m.n);if(e)wsend(c,{t:'warn',b:e})}catch{}}
+  else if(op===1&&c.r==='live'){try{liveText(c,JSON.parse(pl.toString()))}catch{}}
+  else if(op===2&&c.r==='live'&&c.host)hostBin(pl)}}catch(e){console.error('ws',e.message)}});
+ const gone=()=>{if(clients.delete(c)&&c.r==='live')liveLeft(c)};sock.on('close',gone);sock.on('error',gone)});
 setInterval(()=>clients.forEach(c=>{try{c.sock.write(Buffer.from([0x89,0]))}catch{}}),25000);
 /* reset chat komunitas tiap 2 jam sekali (batas genap WIB: 00.00, 02.00, ...). Hanya komunitas; akun, chat pribadi, dan pengaturan tidak disentuh */
 const wib=()=>String(Math.floor((Date.now()+7*36e5)/72e5));
@@ -122,9 +201,9 @@ reset();setInterval(reset,30000);
 function purgeStat(){let ch=0;for(const k in db.users){const s=db.users[k].stat;if(s&&Date.now()-s.t>864e5){db.users[k].stat=null;ch=1}}if(ch)sv()}
 purgeStat();setInterval(purgeStat,6e5);
 const ok=(s,n)=>typeof s==='string'&&s.length<=n;
-const KINDS={text:1e3,stk:3e5,img:12e5,vid:28e5,file:205e4},DURL=/^data:[a-z]+\/[\w.+-]+(;[\w=.-]+)*;base64,[A-Za-z0-9+\/=]+$/;
-const why=(k,b,n)=>!KINDS[k]?'Jenis pesan tidak dikenal':!b?'Pesan kosong':!ok(b,KINDS[k])?'Ukuran terlalu besar (maks '+(KINDS[k]/1e6*.75).toFixed(1)+' MB)':k!=='text'&&!DURL.test(b)?'Format file tidak valid':(k==='img'||k==='stk')&&!b.startsWith('data:image/')?'File bukan gambar':k==='vid'&&!b.startsWith('data:video/')?'File bukan video':/\.(exe|apk|bat|cmd|js|vbs|scr|msi|jar|sh)$/i.test(n||'')?'Jenis file ini diblokir':'Pesan tidak valid';
-const valid=(k,b,n)=>KINDS[k]&&b&&ok(b,KINDS[k])&&(k==='text'||DURL.test(b)&&(k==='file'||b.startsWith(k==='vid'?'data:video/':'data:image/')))&&(n==null||ok(n,120))&&!/\.(exe|apk|bat|cmd|js|vbs|scr|msi|jar|sh)$/i.test(n||'');
+const KINDS={text:1e3,stk:3e5,img:12e5,vid:28e5,file:205e4,aud:3e6},AUDM=4e5,DURL=/^data:[a-z]+\/[\w.+-]+(;[\w=.-]+)*;base64,[A-Za-z0-9+\/=]+$/;
+const why=(k,b,n)=>!KINDS[k]?'Jenis pesan tidak dikenal':!b?'Pesan kosong':!ok(b,KINDS[k])?'Ukuran terlalu besar (maks '+(KINDS[k]/1e6*.75).toFixed(1)+' MB)':k!=='text'&&!DURL.test(b)?'Format file tidak valid':(k==='img'||k==='stk')&&!b.startsWith('data:image/')?'File bukan gambar':k==='vid'&&!b.startsWith('data:video/')?'File bukan video':k==='aud'&&!b.startsWith('data:audio/')?'Bukan rekaman suara':/\.(exe|apk|bat|cmd|js|vbs|scr|msi|jar|sh)$/i.test(n||'')?'Jenis file ini diblokir':'Pesan tidak valid';
+const valid=(k,b,n)=>KINDS[k]&&b&&ok(b,KINDS[k])&&(k==='text'||DURL.test(b)&&(k==='file'||b.startsWith(k==='vid'?'data:video/':k==='aud'?'data:audio/':'data:image/')))&&(n==null||ok(n,120))&&!/\.(exe|apk|bat|cmd|js|vbs|scr|msi|jar|sh)$/i.test(n||'');
 const capMedia=L=>{let m=L.filter(x=>MK.includes(x.k)),tot=m.reduce((a,x)=>a+(x.b?x.b.length:0),0);while(m.length>30||(tot>25e6&&m.length>1)){tot-=m[0].b?m[0].b.length:0;L.splice(L.indexOf(m[0]),1);m.shift()}};
 function redeemCode(u,raw){
  const n=Date.now();u.ra=(u.ra||[]).filter(t=>n-t<6e5);if(u.ra.length>=15)return[429,{e:'Terlalu banyak percobaan, tunggu beberapa menit'}];u.ra.push(n);
@@ -145,15 +224,16 @@ function redeemCode(u,raw){
 function h(q,r,b){
  const[p,qs]=q.url.split('?'),P=new URLSearchParams(qs||''),S=p.split('/').filter(Boolean),c=S[1],m=q.method;
  if(S[0]!=='api')return ER(r,404,'Tidak ditemukan');
- if(c==='ping')return J(r,200,{ok:1,v:10});
+ if(c==='ping')return J(r,200,{ok:1,v:11});
  if(c==='register'||c==='login'){
   const em=String(b.email||'').trim().toLowerCase(),pw=String(b.pass||'');
   if(!/^\S+@\S+\.\S+$/.test(em)||pw.length<6||pw.length>200)return ER(r,400,'Email atau password tidak valid (password minimal 6 karakter)');
   let u=db.users[db.mail[em]];
   if(c==='register'){
    if(u)return ER(r,409,'Email sudah terdaftar, silakan masuk');
+   if(db.regClosed)return ER(r,403,'Pendaftaran akun baru sedang ditutup oleh Owner');
    if(Object.keys(db.users).length>=MAXU)return ER(r,503,'Server penuh, pendaftaran ditutup sementara');
-   const salt=cr.randomBytes(16).toString('hex');u=db.users[db.next]={id:String(db.next),email:em,name:em.split('@')[0].slice(0,24),salt,ph:ph(pw,salt),avatar:'',bg:'',wall:'',fx:'',status:'',fr:[],data:{},ep:0};db.mail[em]=db.next++;
+   const salt=cr.randomBytes(16).toString('hex');u=db.users[db.next]={id:String(db.next),email:em,name:em.split('@')[0].slice(0,24),salt,ph:ph(pw,salt),avatar:'',bg:'',wall:'',fx:'',status:'',fr:[],data:{},ep:0,cr:Date.now()};db.mail[em]=db.next++;
   }else if(!u||ph(pw,u.salt)!==u.ph)return ER(r,401,'Email atau password salah');
   const t=cr.randomBytes(24).toString('hex');db.tok[t]={id:u.id,ep:u.ep,c:Date.now()};sv();return J(r,200,{token:t,user:me(u),data:dat(u)});
  }
@@ -161,16 +241,58 @@ function h(q,r,b){
  const k=db.tok[(q.headers.authorization||'').slice(7)],u=k&&db.users[k.id];
  if(!u||k.ep!==u.ep)return ER(r,401,'Sesi habis, silakan masuk lagi');
  seen[u.id]=Date.now();
- if(c==='hb'){const l=(u.stx||[])[0];return J(r,200,{ok:1,bal:bal(u),tx:u.stx||[]})}
+ if(c==='hb')return J(r,200,{ok:1,bal:bal(u),tx:u.stx||[],live:lpub()||null,gift:u.gift||null,ban:isBanned(u)?(u.bu||1):0});
+ if(c==='gift'&&S[2]==='ack'&&m==='POST'){u.gift=null;sv();return J(r,200,{ok:1})}
  if(c==='me')return J(r,200,me(u));
+ /* ===== LIVE ===== */
+ if(c==='live'){
+  const a=S[2];
+  if(a==='gifts')return J(r,200,{list:GIFTS});
+  if(a==='status')return J(r,200,{live:lpub()||null});
+  if(m!=='POST')return ER(r,404,'Tidak ditemukan');
+  if(a==='gift'){
+   if(!live)return ER(r,409,'Live sedang tidak berlangsung');
+   if(u.id===live.host)return ER(r,400,'Host tidak bisa mengirim gift ke diri sendiri');
+   const g=GMAP[String(b.gid)],q=Math.floor(+b.qty)||1;if(!g||q<1||q>99)return ER(r,400,'Gift tidak valid');
+   const n=Date.now();u.gr=(u.gr||[]).filter(t=>n-t<1e4);if(u.gr.length>=15)return ER(r,429,'Terlalu cepat, tunggu sebentar');
+   const total=g.p*q;if(total>2e7)return ER(r,400,'Maksimal Rp20.000.000 per pengiriman');
+   if(bal(u)<total)return ER(r,400,'Saldo tidak cukup');
+   const hh=db.users[live.host];if(!hh)return ER(r,400,'Host tidak ditemukan');
+   u.gr.push(n);u.sal=bal(u)-total;addTx(u,-total,'Gift '+g.n+(q>1?' ×'+q:'')+' di live '+hh.name);
+   credit(hh,total,'Gift '+g.n+(q>1?' ×'+q:'')+' dari '+u.name);live.gifts+=total;live.top[u.id]=(live.top[u.id]||0)+total;sv();
+   const ev={t:'g',id:n+Math.random(),ts:n,u:{id:u.id,name:u.name,role:pub(u).role,av:pub(u).av},g,q,total};live.cmt.push(ev);if(live.cmt.length>60)live.cmt.shift();
+   lcast(ev);lcast({t:'v',n:liveV().length,g:live.gifts,top:topOf(live)});
+   return J(r,200,{ok:1,bal:u.sal,tx:u.stx,total})}
+  if(!isRoot(u))return ER(r,403,'Hanya Owner utama yang bisa mengelola live');
+  if(a==='start'){
+   if(live)return ER(r,409,'Sudah ada live yang berjalan');
+   const title=String(b.title||'').trim().slice(0,60)||'Live ASTRA';
+   live={host:u.id,hn:u.name,title,t:Date.now(),kind:null,mime:'',init:null,cur:Buffer.alloc(0),head:null,jpg:null,gifts:0,top:{},peak:0,cm:true,mute:new Set(),cmt:[],lj:0,hostGone:Date.now(),snapOn:null};
+   say('🔴 '+u.name+' sedang LIVE: "'+title+'". Ketuk tombol LIVE untuk menonton!');alog(u,'live mulai',title);
+   return J(r,200,{ok:1,live:lpub()})}
+  if(a==='stop'){endLive('Siaran selesai');alog(u,'live selesai','');return J(r,200,{ok:1})}
+  if(a==='mod'){
+   if(!live)return ER(r,409,'Live tidak berlangsung');const id=String(b.id),t=db.users[id];if(!t||isRoot(t))return ER(r,400,'Tidak bisa');
+   if(b.act==='unmute')live.mute.delete(id);else live.mute.add(id);
+   if(b.act==='kick')clients.forEach(c=>{if(c.r==='live'&&c.u.id===id){try{c.sock.end()}catch{}}});
+   alog(u,'live '+b.act,t.name+' (ID '+t.id+')');return J(r,200,{ok:1})}
+  return ER(r,404,'Tidak ditemukan')}
  /* ===== REDEEM (semua jenis kode diperiksa di server, sekali pakai) ===== */
  if(c==='redeem'&&m==='POST'){const [st,o]=redeemCode(u,b.code);return J(r,st,o)}
  /* ===== DOMPET ===== */
  if(c==='wallet'){
   if(S[2]==='spend'&&m==='POST'){const a=Math.floor(+b.amount);if(!(a>0)||a>1e9)return ER(r,400,'Jumlah tidak valid');if(bal(u)<a)return ER(r,400,'Saldo tidak cukup');u.sal=bal(u)-a;addTx(u,-a,String(b.note||'Pembayaran').slice(0,60));sv();return J(r,200,{ok:1,bal:u.sal,tx:u.stx})}
   if(S[2]==='topup'&&m==='POST'){if(process.env.AUTOTOPUP!=='1')return ER(r,403,'Top up otomatis belum diaktifkan di server. Hubungi admin untuk menambah saldo.');const a=Math.floor(+b.amount);if(!(a>0)||a>1e8)return ER(r,400,'Jumlah tidak valid');credit(u,a,'Top up '+String(b.ref||'').slice(0,20));sv();return J(r,200,{ok:1,bal:u.sal,tx:u.stx})}
+  if(S[2]==='giftrole'&&m==='POST'){
+   const n=Date.now();u.tr=(u.tr||[]).filter(t=>n-t<6e4);if(u.tr.length>=5)return ER(r,429,'Terlalu sering, tunggu sebentar');
+   {const ve=vpw(u,b.vp);if(ve)return ER(r,403,ve)}
+   const t=db.users[String(b.to)],pl=PTAB[String(b.plan)];if(!t||t.id===u.id)return ER(r,404,'Penerima tidak ditemukan');if(!pl)return ER(r,400,'Paket tidak valid');
+   if(bal(u)<pl.p)return ER(r,400,'Saldo tidak cukup');
+   const ref='RL'+n.toString(36).toUpperCase()+cr.randomBytes(2).toString('hex').toUpperCase();u.tr.push(n);
+   u.sal=bal(u)-pl.p;addTx(u,-pl.p,'Hadiah role '+pl.n+' untuk '+t.name+' (ID '+t.id+')',ref);t.gift={plan:String(b.plan),days:pl.d,from:u.name,t:n};sv();
+   return J(r,200,{ok:1,ref,t:n,bal:u.sal,tx:u.stx,plan:pl.n,days:pl.d,price:pl.p,to:{id:t.id,name:t.name,role:pub(t).role,av:pub(t).av}})}
   if(S[2]==='transfer'&&m==='POST'){
-   const n=Date.now();u.tr=(u.tr||[]).filter(t=>n-t<6e4);if(u.tr.length>=5)return ER(r,429,'Terlalu sering transfer, tunggu sebentar');
+   const n=Date.now();u.tr=(u.tr||[]).filter(t=>n-t<6e4);if(u.tr.length>=5)return ER(r,429,'Terlalu sering transfer, tunggu sebentar');{const ve=vpw(u,b.vp);if(ve)return ER(r,403,ve)}
    const a=Math.floor(+b.amount),t=db.users[String(b.to)],note=String(b.note||'').trim().slice(0,40);
    if(!t||t.id===u.id)return ER(r,404,'Penerima tidak ditemukan');
    if(!(a>=1000))return ER(r,400,'Minimal transfer Rp1.000');if(a>1e7)return ER(r,400,'Maksimal Rp10.000.000 per transfer');
@@ -218,7 +340,34 @@ function h(q,r,b){
    sv();return J(r,200,{ok:1,codes:out})}
   if(a==='code/del'){const k=nc(b.c);if(!db.codes[k])return ER(r,404,'Kode tidak ditemukan');delete db.codes[k];sv();return J(r,200,{ok:1})}
   const t=db.users[String(b.id)];
-  if(a==='ban'){if(!t)return ER(r,404,'ID tidak ditemukan');if(isRoot(t))return ER(r,403,'Akun Owner tidak bisa di-ban');t.ban=b.on?1:0;if(!b.on)t.st=0;sv();say(b.on?'🛡️ '+t.name+' di-BAN dari komunitas oleh Owner.':'✅ Ban '+t.name+' dibuka oleh Owner.');return J(r,200,{ok:1,ban:!!t.ban})}
+  if(a==='ban'){if(!t)return ER(r,404,'ID tidak ditemukan');if(isRoot(t))return ER(r,403,'Akun Owner tidak bisa di-ban');
+   const dur=Math.max(0,Math.floor(+b.dur)||0),why=String(b.reason||'').trim().slice(0,60);
+   t.ban=b.on?1:0;t.bu=b.on&&dur?Date.now()+dur*6e4:0;if(!b.on)t.st=0;sv();
+   alog(u,b.on?'ban':'buka ban',t.name+' (ID '+t.id+')'+(b.on?(dur?' · '+dur+' menit':' · permanen')+(why?' · '+why:''):''));
+   say(b.on?'🛡️ '+t.name+' di-BAN dari komunitas oleh Owner'+(dur?' selama '+(dur>=1440?Math.round(dur/1440)+' hari':dur>=60?Math.round(dur/60)+' jam':dur+' menit'):' (permanen)')+(why?'. Alasan: '+why:'.'):'✅ Ban '+t.name+' dibuka oleh Owner.');
+   return J(r,200,{ok:1,ban:!!t.ban})}
+  if(a==='mute'){if(!t)return ER(r,404,'ID tidak ditemukan');if(isRoot(t))return ER(r,403,'Akun Owner tidak bisa di-mute');const dur=Math.max(0,Math.floor(+b.dur)||0);t.mute=dur?Date.now()+dur*6e4:0;sv();alog(u,dur?'mute':'buka mute',t.name+' (ID '+t.id+')'+(dur?' · '+dur+' menit':''));return J(r,200,{ok:1,mute:t.mute})}
+  if(a==='saldo'){if(!t)return ER(r,404,'ID tidak ditemukan');const v=Math.trunc(+b.amount);if(!v||Math.abs(v)>1e9)return ER(r,400,'Nominal tidak valid');const d=v<0?-Math.min(-v,bal(t)):v;if(!d)return ER(r,400,'Saldo pengguna sudah 0');
+   if(d>0)credit(t,d,String(b.note||'Penambahan saldo oleh Owner').slice(0,50));else{t.sal=bal(t)+d;addTx(t,d,String(b.note||'Pengurangan saldo oleh Owner').slice(0,50))}sv();alog(u,'saldo',t.name+' (ID '+t.id+') '+(d>0?'+':'')+d);return J(r,200,{ok:1,bal:t.sal})}
+  if(a==='plan'){if(!t)return ER(r,404,'ID tidak ditemukan');const p=String(b.plan||'');if(p!=='free'&&!RL.includes(p))return ER(r,400,'Paket tidak valid');const days=Math.max(0,Math.min(3650,Math.floor(+b.days)||0));t.gift={plan:p,days,from:'Owner',t:Date.now(),rev:p==='free'};sv();alog(u,p==='free'?'cabut premium':'beri premium',t.name+' (ID '+t.id+') '+p+(days?' '+days+' hari':' unlimited'));return J(r,200,{ok:1})}
+  if(a==='user/del'){if(!t)return ER(r,404,'ID tidak ditemukan');if(isRoot(t))return ER(r,403,'Akun Owner tidak bisa dihapus');alog(u,'hapus akun',t.name+' (ID '+t.id+')');delete db.users[t.id];delete db.mail[t.email];clients.forEach(c=>{if(c.u.id===t.id){try{c.sock.destroy()}catch{}}});sv();return J(r,200,{ok:1})}
+  if(a==='users'){const qq=String(b.q||'').trim().toLowerCase(),off=Math.max(0,+b.off||0),lim=Math.min(40,+b.lim||25),n=Date.now();
+   let L=Object.values(db.users);if(qq)L=L.filter(x=>x.id===qq||(x.name||'').toLowerCase().includes(qq)||(x.email||'').includes(qq));
+   if(b.f==='ban')L=L.filter(x=>isBanned(x));else if(b.f==='on')L=L.filter(x=>isOn(x.id));else if(b.f==='adm')L=L.filter(x=>isAdm(x));
+   L.sort((x,y)=>(isOn(y.id)-isOn(x.id))||((y.cr||0)-(x.cr||0)));
+   return J(r,200,{total:L.length,list:L.slice(off,off+lim).map(x=>({id:x.id,name:x.name,email:x.email,role:pub(x).role,adm:x.adm||'',plan:(x.data||{}).plan||'free',pexp:(x.data||{}).planExp||0,sal:bal(x),ban:isBanned(x),bu:x.bu||0,mute:x.mute>n?x.mute:0,on:isOn(x.id),seen:seen[x.id]||0,cr:x.cr||0,av:pub(x).av}))})}
+  if(a==='stats'){const us=Object.values(db.users),n=Date.now(),cs=Object.values(db.codes);
+   return J(r,200,{users:us.length,online:us.filter(x=>isOn(x.id)).length,banned:us.filter(x=>isBanned(x)).length,muted:us.filter(x=>x.mute>n).length,admins:us.filter(x=>isAdm(x)).length,saldo:us.reduce((a,x)=>a+bal(x),0),com:db.com.length,codes:{free:cs.filter(c=>!c.used&&!(c.exp&&c.exp<n)).length,used:cs.filter(c=>c.used).length},live:lpub()||null,lastLive:db.lastLive||null,slow:db.slow||0,lock:!!db.lock,pin:db.pin||null,regClosed:!!db.regClosed,words:(db.words||[]).length,up:Math.round(process.uptime()),mem:Math.round(process.memoryUsage().rss/1e6),gifts:GIFTS.length})}
+  if(a==='com'){let ch=[];
+   if(b.slow!=null){db.slow=Math.max(0,Math.min(600,Math.floor(+b.slow)||0));ch.push('mode lambat '+db.slow+'s')}
+   if(b.lock!=null){db.lock=!!b.lock;ch.push(db.lock?'komunitas dikunci':'komunitas dibuka')}
+   if(b.pin!=null){const p=String(b.pin).trim().slice(0,300);db.pin=p?{b:p,t:Date.now()}:null;ch.push(p?'pin pengumuman':'hapus pin')}
+   if(b.announce){say('📢 PENGUMUMAN OWNER: '+String(b.announce).trim().slice(0,400));ch.push('pengumuman')}
+   sv();alog(u,'komunitas',ch.join(', '));return J(r,200,{ok:1,slow:db.slow||0,lock:!!db.lock,pin:db.pin||null})}
+  if(a==='words'){db.words=db.words||[];const w=String(b.w||'').trim().toLowerCase().slice(0,30);
+   if(b.act==='add'&&w.length>=2&&!db.words.includes(w)&&db.words.length<200){db.words.push(w);alog(u,'kata dilarang +',w)}else if(b.act==='del'){db.words=db.words.filter(x=>x!==w);alog(u,'kata dilarang -',w)}sv();return J(r,200,{ok:1,list:db.words})}
+  if(a==='reg'){db.regClosed=!b.open;sv();alog(u,'pendaftaran',db.regClosed?'ditutup':'dibuka');return J(r,200,{ok:1,regClosed:!!db.regClosed})}
+  if(a==='log')return J(r,200,{list:db.alog||[]})
   if(a==='clear'){db.com=[];sv();cast({t:'clear',day:db.cday,force:1});say('🧹 Chat komunitas direset oleh Owner.');return J(r,200,{ok:1})}
   if(a==='status/del'){if(!t)return ER(r,404,'ID tidak ditemukan');t.stat=null;sv();return J(r,200,{ok:1})}
   return ER(r,404,'Tidak ditemukan')}
@@ -244,7 +393,7 @@ function h(q,r,b){
  if(c==='user'){const x=db.users[S[2]];return x?J(r,200,pub(x)):ER(r,404,'ID tidak ditemukan')}
  if(c==='friend'&&m==='POST'){const x=db.users[String(b.id)];if(!x||x.id===u.id)return ER(r,404,'ID tidak ditemukan');if(!u.fr.includes(x.id))u.fr.push(x.id);if(!x.fr.includes(u.id))x.fr.push(u.id);sv();return J(r,200,pub(x))}
  if(c==='unfriend'&&m==='POST'){const x=db.users[String(b.id)];u.fr=u.fr.filter(i=>i!==String(b.id));if(x)x.fr=x.fr.filter(i=>i!==u.id);sv();return J(r,200,{ok:1})}
- if(c==='chats')return J(r,200,u.fr.map(i=>db.users[i]).filter(Boolean).map(x=>{const L=db.dm[[u.id,x.id].sort().join('-')]||[],l=L[L.length-1],rd=(u.rd||{})[x.id]||0;const pv=!l?'':l.k==='text'?String(l.b).slice(0,60):l.k==='img'?'📷 Foto':l.k==='vid'?'🎥 Video':l.k==='stk'?'🌟 Stiker':'📎 '+(l.n||'File');return{u:pub(x),p:pv,t:l?l.t:0,me:l?l.u===u.id:false,un:L.filter(m=>m.u===x.id&&m.t>rd).length}}).sort((a,b)=>b.t-a.t))
+ if(c==='chats')return J(r,200,u.fr.map(i=>db.users[i]).filter(Boolean).map(x=>{const L=db.dm[[u.id,x.id].sort().join('-')]||[],l=L[L.length-1],rd=(u.rd||{})[x.id]||0;const pv=!l?'':l.k==='text'?String(l.b).slice(0,60):l.k==='img'?'📷 Foto':l.k==='vid'?'🎥 Video':l.k==='stk'?'🌟 Stiker':l.k==='aud'?'🎤 Pesan suara':'📎 '+(l.n||'File');return{u:pub(x),p:pv,t:l?l.t:0,me:l?l.u===u.id:false,un:L.filter(m=>m.u===x.id&&m.t>rd).length}}).sort((a,b)=>b.t-a.t))
  if(c==='friends')return J(r,200,u.fr.map(i=>db.users[i]).filter(Boolean).map(pub));
  /* hapus pesan: POST /api/com/del atau /api/dm/<id>/del  body {i} */
  if(m==='POST'&&(c==='com'&&S[2]==='del'||c==='dm'&&S[3]==='del')){
@@ -259,11 +408,11 @@ function h(q,r,b){
   let L;if(c==='com')L=db.com;else{const o=S[2];if(!db.users[o])return ER(r,404,'ID tidak ditemukan');if(!u.fr.includes(o))return ER(r,403,'Tambahkan dulu sebagai teman untuk chat pribadi');L=db.dm[[u.id,o].sort().join('-')]||=[]}
   if(m==='POST'){
    if(!valid(b.k,b.b,b.n))return ER(r,400,why(b.k,b.b,b.n));
-   if(c==='com'){const e=postCom(u,b.k,b.b,b.n);if(e)return ER(r,403,e)}else{const mm={i:Date.now()+Math.random(),t:Date.now(),u:u.id,k:b.k,b:b.b,n:b.n};L.push(mm);capMedia(L);castU([u.id,S[2]],{t:'dm',from:u.id,to:S[2],m:mm,u:{[u.id]:pub(u)}});if(L.length>300)L.splice(0,L.length-300);sv()}
+   if(c==='com'){const e=postCom(u,b.k,b.b,b.n);if(e)return ER(r,403,e)}else{if(b.k==='aud'&&!isAdm(u)&&b.b.length>AUDM)return ER(r,413,'Pesan suara member maksimal 30 detik');const mm={i:Date.now()+Math.random(),t:Date.now(),u:u.id,k:b.k,b:b.b,n:b.n};L.push(mm);capMedia(L);castU([u.id,S[2]],{t:'dm',from:u.id,to:S[2],m:mm,u:{[u.id]:pub(u)}});if(L.length>300)L.splice(0,L.length-300);sv()}
   }
   if(c==='dm')(u.rd||={})[S[2]]=Date.now();
   const s=+P.get('since')||0,ms=L.filter(x=>x.t>s),us={};ms.forEach(x=>us[x.u]=pub(db.users[x.u]||{id:x.u,name:'?',role:'free'}));
-  us.bot=BOT;return J(r,200,{m:ms,u:us,ids:L.map(x=>x.i),now:Date.now(),tos:c==='com'&&!s?TOS:undefined,day:c==='com'?db.cday:undefined});
+  us.bot=BOT;return J(r,200,{m:ms,u:us,ids:L.map(x=>x.i),now:Date.now(),tos:c==='com'&&!s?TOS:undefined,day:c==='com'?db.cday:undefined,...(c==='com'?{slow:db.slow||0,lock:!!db.lock,pin:db.pin||null}:{})});
  }
  ER(r,404,'Tidak ditemukan');
 }

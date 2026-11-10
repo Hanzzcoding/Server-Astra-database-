@@ -10,7 +10,7 @@ const clean=()=>{const f=a=>(a||[]).filter(m=>!MK.includes(m.k)||m.b);db.com=f(d
 let dirty=0,lastUp=0,loaded=!process.env.UPSTASH_REDIS_REST_URL;const sv=()=>dirty=1,fast=()=>{dirty=1;lastUp=0};
 // Penyimpanan permanen (opsional, gratis): isi env UPSTASH_REDIS_REST_URL dan UPSTASH_REDIS_REST_TOKEN
 const RU=process.env.UPSTASH_REDIS_REST_URL,RT=process.env.UPSTASH_REDIS_REST_TOKEN;
-const rcmd=a=>fetch(RU,{method:'POST',headers:{authorization:'Bearer '+RT,'content-type':'application/json'},body:JSON.stringify(a)}).then(r=>r.json());
+const rcmd=a=>(store.cmds++,fetch(RU,{method:'POST',headers:{authorization:'Bearer '+RT,'content-type':'application/json'},body:JSON.stringify(a)}).then(r=>r.json()));
 const rpipe=a=>fetch(RU+'/pipeline',{method:'POST',headers:{authorization:'Bearer '+RT,'content-type':'application/json'},body:JSON.stringify(a)}).then(r=>r.json());
 const rep=function(k,v){return k==='b'&&MK.includes(this.k)?undefined:v};
 /* Data dipecah jadi beberapa kunci kecil (foto profil, background, data sinkron tiap pengguna, chat komunitas, tiap chat pribadi)
@@ -18,30 +18,32 @@ const rep=function(k,v){return k==='b'&&MK.includes(this.k)?undefined:v};
 const HEAVY=['avatar','bg','wall'];
 function shardsOf(d){const sh={},us={};
  for(const id in d.users){const l={...d.users[id]},hv=[];for(const f of HEAVY)if(l[f]){sh['astra-u:'+id+':'+f]=l[f];hv.push(f);delete l[f]}
-  if(l.data&&Object.keys(l.data).length){sh['astra-u:'+id+':data']=JSON.stringify(l.data);hv.push('data')}delete l.data;l._h=hv;us[id]=l}
+  if(l.data&&Object.keys(l.data).length){sh['astra-u:'+id+':data']=JSON.stringify(l.data);hv.push('data')}delete l.data;
+  if(l.stx&&l.stx.length){sh['astra-u:'+id+':stx']=JSON.stringify(l.stx);hv.push('stx')}delete l.stx;l._h=hv;us[id]=l}
  sh['astra-com']=JSON.stringify(d.com,rep);const dmk=Object.keys(d.dm).filter(k=>(d.dm[k]||[]).length);for(const k of dmk)sh['astra-dm:'+k]=JSON.stringify(d.dm[k],rep);
- sh['astra-db']=JSON.stringify({...d,users:us,com:[],dm:{},dmk},rep);return sh}
-const sent={};let needMig=0,busy=0;
+ {const{pay,...rest}=d;sh['astra-db']=JSON.stringify({...rest,users:us,com:[],dm:{},dmk},rep);sh['astra-cfg']=JSON.stringify({prices:d.prices||{},pay:pay||{},pv:d.payv||0})}return sh}
+const sent={};let needMig=0,busy=0;const store={up:!!process.env.UPSTASH_REDIS_REST_URL,ok:0,err:'',errAt:0,cmds:0,dbKB:0,bootOk:0};
 function writeLocal(){const t=JSON.stringify(db,rep);fs.writeFile(FILE+'.tmp',t,e=>!e&&fs.rename(FILE+'.tmp',FILE,()=>{}))}
-async function pushUp(){if(!RU||!loaded)return true;const sh=shardsOf(db);let ok=true;
- {const w={};for(const id in db.users){const u=db.users[id];if(u.sal!==undefined)w[id]=[u.sal,u.wv||0,(u.stx||[]).slice(0,30)]}const wj=JSON.stringify(w);
-  if(sent['astra-wal']!==wj){try{const r=await rcmd(['SET','astra-wal',wj]);if(r.error)throw new Error(r.error);sent['astra-wal']=wj}catch(e){ok=false;console.error('Upstash gagal astra-wal',e.message)}}}
- if(!needMig){const m0=sh['astra-db'];if(sent['astra-db']!==m0){try{const r=await rcmd(['SET','astra-db',m0]);if(r.error)throw new Error(r.error);sent['astra-db']=m0}catch(e){ok=false;console.error('Upstash gagal astra-db',e.message)}}}
- for(const k of Object.keys(sh)){if(k==='astra-db'||sent[k]===sh[k])continue;try{const r=await rcmd(['SET',k,sh[k]]);if(r.error)throw new Error(r.error);sent[k]=sh[k]}catch(e){ok=false;console.error('Upstash gagal',k,e.message)}}
+async function pushUp(){if(!RU||!loaded)return true;const sh=shardsOf(db);let ok=true;store.dbKB=Math.round((sh['astra-db']||'').length/1024);
+ {const w={};for(const id in db.users){const u=db.users[id];if(u.sal!==undefined)w[id]=[u.sal,u.wv||0,(u.stx||[]).slice(0,8)]}const wj=JSON.stringify(w);
+  if(sent['astra-wal']!==wj){try{const r=await rcmd(['SET','astra-wal',wj]);if(r.error)throw new Error(r.error);sent['astra-wal']=wj}catch(e){ok=false;{store.err='astra-wal: '+e.message;store.errAt=Date.now();console.error('Upstash gagal astra-wal',e.message)}}}}
+ if(!needMig){const m0=sh['astra-db'];if(sent['astra-db']!==m0){try{const r=await rcmd(['SET','astra-db',m0]);if(r.error)throw new Error(r.error);sent['astra-db']=m0}catch(e){ok=false;{store.err='astra-db: '+e.message;store.errAt=Date.now();console.error('Upstash gagal astra-db',e.message)}}}}
+ for(const k of Object.keys(sh)){if(k==='astra-db'||sent[k]===sh[k])continue;try{const r=await rcmd(['SET',k,sh[k]]);if(r.error)throw new Error(r.error);sent[k]=sh[k]}catch(e){ok=false;{store.err=k+': '+e.message;store.errAt=Date.now();console.error('Upstash gagal',k,e.message)}}}
  for(const k of Object.keys(sent))if(k!=='astra-wal'&&!(k in sh)){try{await rcmd(['DEL',k]);delete sent[k]}catch(e){}}
  if(needMig&&!ok)return false;
- const m=sh['astra-db'];if(sent['astra-db']!==m){try{const r=await rcmd(['SET','astra-db',m]);if(r.error)throw new Error(r.error);sent['astra-db']=m}catch(e){ok=false;console.error('Upstash gagal astra-db',e.message)}}
- if(ok)needMig=0;return ok}
+ const m=sh['astra-db'];if(sent['astra-db']!==m){try{const r=await rcmd(['SET','astra-db',m]);if(r.error)throw new Error(r.error);sent['astra-db']=m}catch(e){ok=false;{store.err='astra-db: '+e.message;store.errAt=Date.now();console.error('Upstash gagal astra-db',e.message)}}}
+ if(ok){needMig=0;store.ok=Date.now();store.err=''}return ok}
 function reconcile(w,src){let n=0;for(const id in w){const u=db.users[id],x=w[id];if(!u||!x)continue;bal(u);if((x[1]||0)>(u.wv||0)){u.sal=Math.max(0,Math.floor(+x[0]||0));u.wv=x[1];if(Array.isArray(x[2])&&x[2].length)u.stx=x[2];n++}}if(n)console.log('Dompet dipulihkan dari '+src+': '+n+' akun');return n}
+async function loadCfg(){try{const rc=await rcmd(['GET','astra-cfg']);if(rc.result){sent['astra-cfg']=rc.result;const c=JSON.parse(rc.result);db.pay=c.pay||{};if(c.pv)db.payv=c.pv;if(c.prices&&Object.keys(c.prices).length&&!Object.keys(db.prices||{}).length)db.prices=c.prices}}catch(e){}}
 async function loadUp(){const r=await rcmd(['GET','astra-db']);if(r.error||(r.result===undefined))throw new Error(r.error||'respons Upstash tidak valid');if(!r.result)return;const m=JSON.parse(r.result);sent['astra-db']=r.result;
  const legacy=Array.isArray(m.com)&&m.com.length>0||Object.values(m.users||{}).some(u=>u&&(u.avatar||u.bg||u.wall||(u.data&&Object.keys(u.data).length)))||!m.dmk;
- if(legacy){db=m;needMig=1;MX();clean();try{const rw=await rcmd(['GET','astra-wal']);if(rw.result)reconcile(JSON.parse(rw.result),'Upstash (cadangan)')}catch(e){}return}
+ if(legacy){db=m;needMig=1;MX();clean();await loadCfg();try{const rw=await rcmd(['GET','astra-wal']);if(rw.result)reconcile(JSON.parse(rw.result),'Upstash (cadangan)')}catch(e){}return}
  const keys=['astra-com'];for(const id in m.users)for(const f of m.users[id]._h||[])keys.push('astra-u:'+id+':'+f);for(const k of m.dmk||[])keys.push('astra-dm:'+k);
  const vals={};for(let i=0;i<keys.length;i+=20){const ch=keys.slice(i,i+20),rr=await rpipe(ch.map(k=>['GET',k]));if(!Array.isArray(rr)||rr.some(x=>x&&x.error))throw new Error('pipeline Upstash gagal');ch.forEach((k,j)=>{if(rr[j]&&rr[j].result!=null){vals[k]=rr[j].result;sent[k]=rr[j].result}})}
  m.com=vals['astra-com']?JSON.parse(vals['astra-com']):[];m.dm={};for(const k of m.dmk||[])m.dm[k]=vals['astra-dm:'+k]?JSON.parse(vals['astra-dm:'+k]):[];
- for(const id in m.users){const u=m.users[id];for(const f of u._h||[]){const v=vals['astra-u:'+id+':'+f];if(v==null)continue;u[f]=f==='data'?JSON.parse(v):v}delete u._h;if(!u.data)u.data={}}
- delete m.dmk;db=m;MX();clean();try{const rw=await rcmd(['GET','astra-wal']);if(rw.result){sent['astra-wal']=rw.result;reconcile(JSON.parse(rw.result),'Upstash (cadangan)')}}catch(e){}}
-setInterval(async()=>{if(!dirty||busy)return;busy=1;try{writeLocal();if(RU&&Date.now()-lastUp>6000){dirty=0;lastUp=Date.now();if(!await pushUp())dirty=1}else if(!RU)dirty=0}catch(e){console.error(e.message)}busy=0},2000);
+ for(const id in m.users){const u=m.users[id];for(const f of u._h||[]){const v=vals['astra-u:'+id+':'+f];if(v==null)continue;u[f]=(f==='data'||f==='stx')?JSON.parse(v):v}delete u._h;if(!u.data)u.data={}}
+ delete m.dmk;db=m;MX();clean();await loadCfg();try{const rw=await rcmd(['GET','astra-wal']);if(rw.result){sent['astra-wal']=rw.result;reconcile(JSON.parse(rw.result),'Upstash (cadangan)')}}catch(e){}}
+setInterval(async()=>{if(!dirty||busy)return;busy=1;try{writeLocal();if(RU&&Date.now()-lastUp>12000){dirty=0;lastUp=Date.now();if(!await pushUp())dirty=1}else if(!RU)dirty=0}catch(e){console.error(e.message)}busy=0},2000);
 /* token login: buang yang sudah lama dan batasi per akun supaya data tidak membengkak */
 function pruneTok(){const n=Date.now(),per={};const ks=Object.keys(db.tok).sort((a,b)=>(db.tok[b].c||0)-(db.tok[a].c||0));let ch=0;for(const t of ks){const k=db.tok[t];per[k.id]=(per[k.id]||0)+1;if(n-(k.c||0)>60*864e5||per[k.id]>8||!db.users[k.id]){delete db.tok[t];ch=1}}if(ch)sv()}
 setInterval(pruneTok,36e5);
@@ -265,7 +267,8 @@ function h(q,r,b){
  if(!u||k.ep!==u.ep)return ER(r,401,'Sesi habis, silakan masuk lagi');
   seen[u.id]=Date.now();
  if(db.maint&&!isAdm(u)&&c!=='hb')return ER(r,503,'Server sedang pemeliharaan: '+db.maint);
- if(c==='hb')return J(r,200,{ok:1,maint:db.maint||'',pr:ptab(),bal:bal(u),tx:u.stx||[],live:lpub()||null,gift:u.gift||null,ban:isBanned(u)?(u.bu||1):0});
+ if(c==='pay'&&m==='GET')return J(r,200,{pay:db.pay||{}});
+ if(c==='hb')return J(r,200,{ok:1,maint:db.maint||'',pr:ptab(),payv:db.payv||0,bal:bal(u),tx:u.stx||[],live:lpub()||null,gift:u.gift||null,ban:isBanned(u)?(u.bu||1):0});
  if(c==='gift'&&S[2]==='ack'&&m==='POST'){u.gift=null;sv();return J(r,200,{ok:1})}
  if(c==='me')return J(r,200,me(u));
  /* ===== LIVE ===== */
@@ -384,7 +387,7 @@ function h(q,r,b){
    if(b.sort==='sal')L.sort((x,y)=>bal(y)-bal(x));else L.sort((x,y)=>(isOn(y.id)-isOn(x.id))||((y.cr||0)-(x.cr||0)));
    return J(r,200,{total:L.length,list:L.slice(off,off+lim).map(x=>({id:x.id,name:x.name,email:x.email,role:pub(x).role,adm:x.adm||'',plan:(x.data||{}).plan||'free',pexp:(x.data||{}).planExp||0,sal:bal(x),ban:isBanned(x),bu:x.bu||0,mute:x.mute>n?x.mute:0,on:isOn(x.id),seen:seen[x.id]||0,cr:x.cr||0,av:pub(x).av}))})}
   if(a==='stats'){const us=Object.values(db.users),n=Date.now(),cs=Object.values(db.codes);
-   return J(r,200,{users:us.length,online:us.filter(x=>isOn(x.id)).length,banned:us.filter(x=>isBanned(x)).length,muted:us.filter(x=>x.mute>n).length,admins:us.filter(x=>isAdm(x)).length,saldo:us.reduce((a,x)=>a+bal(x),0),com:db.com.length,codes:{free:cs.filter(c=>!c.used&&!(c.exp&&c.exp<n)).length,used:cs.filter(c=>c.used).length},live:lpub()||null,lastLive:db.lastLive||null,slow:db.slow||0,lock:!!db.lock,pin:db.pin||null,maint:db.maint||'',nomedia:!!db.nomedia,novoice:!!db.novoice,regClosed:!!db.regClosed,words:(db.words||[]).length,up:Math.round(process.uptime()),mem:Math.round(process.memoryUsage().rss/1e6),gifts:GIFTS.length})}
+   return J(r,200,{users:us.length,online:us.filter(x=>isOn(x.id)).length,banned:us.filter(x=>isBanned(x)).length,muted:us.filter(x=>x.mute>n).length,admins:us.filter(x=>isAdm(x)).length,saldo:us.reduce((a,x)=>a+bal(x),0),com:db.com.length,codes:{free:cs.filter(c=>!c.used&&!(c.exp&&c.exp<n)).length,used:cs.filter(c=>c.used).length},live:lpub()||null,lastLive:db.lastLive||null,slow:db.slow||0,lock:!!db.lock,pin:db.pin||null,maint:db.maint||'',nomedia:!!db.nomedia,novoice:!!db.novoice,store:{...store,loaded},regClosed:!!db.regClosed,words:(db.words||[]).length,up:Math.round(process.uptime()),mem:Math.round(process.memoryUsage().rss/1e6),gifts:GIFTS.length})}
   if(a==='com'){let ch=[];
    if(b.slow!=null){db.slow=Math.max(0,Math.min(600,Math.floor(+b.slow)||0));ch.push('mode lambat '+db.slow+'s')}
    if(b.lock!=null){db.lock=!!b.lock;ch.push(db.lock?'komunitas dikunci':'komunitas dibuka')}
@@ -395,7 +398,21 @@ function h(q,r,b){
    sv();alog(u,'komunitas',ch.join(', '));return J(r,200,{ok:1,slow:db.slow||0,lock:!!db.lock,pin:db.pin||null})}
   if(a==='purge'){if(!t)return ER(r,404,'ID tidak ditemukan');if(isRoot(t))return ER(r,403,'Tidak bisa');const del=db.com.filter(x=>x.u===t.id);db.com=db.com.filter(x=>x.u!==t.id);del.forEach(x=>cast({t:'del',i:x.i}));sv();alog(u,'hapus semua chat',t.name+' ('+del.length+' pesan)');return J(r,200,{ok:1,n:del.length})}
   if(a==='price'){const id=String(b.plan);if(!PTAB[id])return ER(r,400,'Paket tidak valid');db.prices=db.prices||{};if(b.off){delete db.prices[id];alog(u,'harga normal',id)}else{const p=Math.floor(+b.p);if(!(p>=0)||p>1e8)return ER(r,400,'Harga tidak valid');const mins=Math.max(0,Math.floor(+b.mins)||0);db.prices[id]={p,note:String(b.note||'').trim().slice(0,90),until:mins?Date.now()+mins*6e4:0};alog(u,'harga',id+' '+PTAB[id].p+' → '+p+(mins?' · '+mins+' menit':''));if(p<PTAB[id].p)say('🏷️ PROMO! '+PTAB[id].n+' turun dari Rp'+PTAB[id].p.toLocaleString('id-ID')+' jadi Rp'+p.toLocaleString('id-ID')+(db.prices[id].note?' · '+db.prices[id].note:'')+'. Cek menu Upgrade!')}sv();return J(r,200,{ok:1,pr:ptab()})}
-  if(a==='prices')return J(r,200,{base:Object.fromEntries(Object.entries(PTAB).map(([k,v])=>[k,{p:v.p,n:v.n,d:v.d}])),pr:ptab(),raw:db.prices||{}})
+  if(a==='pay'){const id=String(b.plan);if(!PTAB[id])return ER(r,400,'Paket tidak valid');db.pay=db.pay||{};
+   if(b.off){delete db.pay[id]}else{const link=String(b.link||'').trim();if(link&&!/^https:\/\/[^\s"'<>]{4,600}$/.test(link))return ER(r,400,'Link pembayaran harus diawali https://');
+    let qr=b.qr===undefined?(db.pay[id]||{}).qr||'':String(b.qr||'');if(qr&&(!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+\/=]+$/.test(qr)||qr.length>4e5))return ER(r,400,'Gambar QR harus PNG/JPG/WebP dan maks ±290 KB');
+    if(!link&&!qr)delete db.pay[id];else db.pay[id]={link,qr,note:String(b.note||'').slice(0,80)}}
+   db.payv=Date.now();sv();alog(u,'pembayaran',id+(b.off?' dihapus':' diperbarui'));return J(r,200,{ok:1,pay:db.pay})}
+  if(a==='backup'){const us={};for(const id in db.users){const x={...db.users[id]};for(const f of HEAVY)delete x[f];us[id]=x}alog(u,'unduh cadangan','');return J(r,200,{v:1,t:Date.now(),users:us,mail:db.mail,codes:db.codes,used:db.used,vip:db.vip,prices:db.prices||{},pay:db.pay||{},words:db.words||[],next:db.next})}
+  if(a==='restore'){const d=b.data;if(!d||d.v!==1||typeof d.users!=='object')return ER(r,400,'File cadangan tidak valid');let add=0,upd=0;
+   for(const id in d.users){const bu=d.users[id];if(!bu||!bu.email||!bu.ph||!bu.salt)continue;const cu=db.users[id];
+    if(!cu){if(db.mail[bu.email]&&db.mail[bu.email]!==id)continue;db.users[id]={...bu,avatar:'',bg:'',wall:''};db.mail[bu.email]=id;add++;continue}
+    bal(cu);const bs=Math.max(0,Math.floor(+bu.sal||0));if(b.force?bs!==cu.sal:((bu.wv||0)>(cu.wv||0)||(!(cu.wv)&&cu.sal===0&&bs>0))){cu.sal=bs;cu.wv=Math.max(cu.wv||0,bu.wv||0)+1;if(Array.isArray(bu.stx)&&bu.stx.length)cu.stx=bu.stx;upd++}
+    if(bu.data&&(!cu.data||!Object.keys(cu.data).length))cu.data=bu.data}
+   for(const k in (d.codes||{}))if(!db.codes[k])db.codes[k]=d.codes[k];for(const k in (d.used||{}))if(!db.used[k])db.used[k]=d.used[k];
+   if(d.prices&&(b.force||!Object.keys(db.prices||{}).length))db.prices=d.prices;if(d.pay&&(b.force||!Object.keys(db.pay||{}).length)){db.pay=d.pay;db.payv=Date.now()}
+   if(Array.isArray(d.words)&&!(db.words||[]).length)db.words=d.words;db.next=Math.max(db.next,+d.next||0);fast();sv();alog(u,'pulihkan cadangan',add+' akun baru, '+upd+' saldo');return J(r,200,{ok:1,add,upd})}
+  if(a==='prices')return J(r,200,{base:Object.fromEntries(Object.entries(PTAB).map(([k,v])=>[k,{p:v.p,n:v.n,d:v.d}])),pr:ptab(),raw:db.prices||{},pay:db.pay||{}})
   if(a==='txlog')return J(r,200,{list:(db.glog||[]).slice(0,100)})
   if(a==='words'){db.words=db.words||[];const w=String(b.w||'').trim().toLowerCase().slice(0,30);
    if(b.act==='add'&&w.length>=2&&!db.words.includes(w)&&db.words.length<200){db.words.push(w);alog(u,'kata dilarang +',w)}else if(b.act==='del'){db.words=db.words.filter(x=>x!==w);alog(u,'kata dilarang -',w)}sv();return J(r,200,{ok:1,list:db.words})}

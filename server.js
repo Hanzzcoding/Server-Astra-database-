@@ -15,16 +15,29 @@ const rpipe=a=>fetch(RU+'/pipeline',{method:'POST',headers:{authorization:'Beare
 const rep=function(k,v){return k==='b'&&MK.includes(this.k)?undefined:v};
 /* Data dipecah jadi beberapa kunci kecil (foto profil, background, data sinkron tiap pengguna, chat komunitas, tiap chat pribadi)
    supaya tidak melewati batas ukuran satu permintaan Upstash dan tidak ada data yang hilang saat server restart. */
-const HEAVY=['avatar','bg','wall'],WPC=600000;
+const HEAVY=['avatar','bg','wall'];
+/* ===== file video wallpaper: disimpan di disk (hemat RAM), cadangan di Upstash per potongan ===== */
+const path=require('path'),WPDIR=path.join(path.dirname(path.resolve(FILE)),'astra-wp'),WPRAW=450000,wpSent={},wpLeg=[];
+try{fs.mkdirSync(WPDIR,{recursive:true})}catch{}
+const wpPath=f=>path.join(WPDIR,String(f).replace(/[^\w]/g,'')),wpTmp=f=>path.join(WPDIR,'t-'+String(f).replace(/[^\w]/g,''));
+const wpUnl=p=>{try{fs.unlinkSync(p)}catch{}};
+const wpErr=(m,e)=>{store.err='wallpaper '+m+': '+e.message;store.errAt=Date.now();console.error('Upstash wallpaper gagal',m,e.message)};
 function shardsOf(d){const sh={},us={};
  for(const id in d.users){const l={...d.users[id]},hv=[];for(const f of HEAVY)if(l[f]){sh['astra-u:'+id+':'+f]=l[f];hv.push(f);delete l[f]}
   if(l.data&&Object.keys(l.data).length){sh['astra-u:'+id+':data']=JSON.stringify(l.data);hv.push('data')}delete l.data;
   if(l.stx&&l.stx.length){sh['astra-u:'+id+':stx']=JSON.stringify(l.stx);hv.push('stx')}delete l.stx;l._h=hv;us[id]=l}
  sh['astra-com']=JSON.stringify(d.com,rep);const dmk=Object.keys(d.dm).filter(k=>(d.dm[k]||[]).length);for(const k of dmk)sh['astra-dm:'+k]=JSON.stringify(d.dm[k],rep);
- {const{pay,wp,wpf,...rest}=d;sh['astra-db']=JSON.stringify({...rest,users:us,com:[],dm:{},dmk},rep);const wc={};for(const fid in (wpf||{})){const t=wpf[fid],n=Math.ceil(t.length/WPC);wc[fid]=n;for(let i=0;i<n;i++)sh['astra-wpf:'+fid+':'+i]=t.slice(i*WPC,(i+1)*WPC)}sh['astra-cfg']=JSON.stringify({prices:d.prices||{},pay:pay||{},pv:d.payv||0,wp:wp||null,wpc:wc})}return sh}
+ {const{pay,wp,wpf,...rest}=d;sh['astra-db']=JSON.stringify({...rest,users:us,com:[],dm:{},dmk},rep);const wm={};for(const f in wpSent)if(wpf&&wpf[f])wm[f]=wpSent[f];sh['astra-cfg']=JSON.stringify({prices:d.prices||{},pay:pay||{},pv:d.payv||0,wp:wp||null,wpm:wm})}return sh}
 const sent={};let needMig=0,busy=0;const store={up:!!process.env.UPSTASH_REDIS_REST_URL,ok:0,err:'',errAt:0,cmds:0,dbKB:0,bootOk:0};
 function writeLocal(){const t=JSON.stringify(db,rep);fs.writeFile(FILE+'.tmp',t,e=>!e&&fs.rename(FILE+'.tmp',FILE,()=>{}))}
-async function pushUp(){if(!RU||!loaded)return true;const sh=shardsOf(db);let ok=true;store.dbKB=Math.round((sh['astra-db']||'').length/1024);
+async function wpPush(){let ok=true;
+ while(wpLeg.length){const[f,n]=wpLeg[0];try{const ks=[];for(let i=0;i<n;i++)ks.push(['DEL','astra-wpf:'+f+':'+i]);for(let i=0;i<ks.length;i+=20){const rr=await rpipe(ks.slice(i,i+20));if(!Array.isArray(rr))throw new Error('pipeline gagal')}wpLeg.shift()}catch(e){ok=false;wpErr('hapus lama',e);break}}
+ for(const f of Object.keys(wpSent))if(!db.wpf||!db.wpf[f]){const m=wpSent[f];try{for(let i=0;i<m.c;i+=20){const ks=[];for(let j=i;j<Math.min(m.c,i+20);j++)ks.push(['DEL','astra-wpb:'+f+':'+j]);const rr=await rpipe(ks);if(!Array.isArray(rr)||rr.some(x=>x&&x.error))throw new Error('hapus gagal')}delete wpSent[f]}catch(e){ok=false;wpErr('hapus '+f,e)}}
+ for(const f in (db.wpf||{})){if(wpSent[f])continue;let fd=null;try{const sz=fs.statSync(wpPath(f)).size,c=Math.ceil(sz/WPRAW),buf=Buffer.alloc(WPRAW);fd=fs.openSync(wpPath(f),'r');
+   for(let i=0;i<c;i++){const n=fs.readSync(fd,buf,0,WPRAW,i*WPRAW),r=await rcmd(['SET','astra-wpb:'+f+':'+i,buf.subarray(0,n).toString('base64')]);if(r.error)throw new Error(r.error)}
+   fs.closeSync(fd);fd=null;wpSent[f]={c,n:sz,m:db.wpf[f].m}}catch(e){ok=false;if(fd)try{fs.closeSync(fd)}catch{}wpErr('unggah '+f,e)}}
+ return ok}
+async function pushUp(){if(!RU||!loaded)return true;let ok=true;if(!await wpPush())ok=false;const sh=shardsOf(db);store.dbKB=Math.round((sh['astra-db']||'').length/1024);
  {const w={};for(const id in db.users){const u=db.users[id];if(u.sal!==undefined)w[id]=[u.sal,u.wv||0,(u.stx||[]).slice(0,8)]}const wj=JSON.stringify(w);
   if(sent['astra-wal']!==wj){try{const r=await rcmd(['SET','astra-wal',wj]);if(r.error)throw new Error(r.error);sent['astra-wal']=wj}catch(e){ok=false;{store.err='astra-wal: '+e.message;store.errAt=Date.now();console.error('Upstash gagal astra-wal',e.message)}}}}
  if(!needMig){const m0=sh['astra-db'];if(sent['astra-db']!==m0){try{const r=await rcmd(['SET','astra-db',m0]);if(r.error)throw new Error(r.error);sent['astra-db']=m0}catch(e){ok=false;{store.err='astra-db: '+e.message;store.errAt=Date.now();console.error('Upstash gagal astra-db',e.message)}}}}
@@ -34,7 +47,14 @@ async function pushUp(){if(!RU||!loaded)return true;const sh=shardsOf(db);let ok
  const m=sh['astra-db'];if(sent['astra-db']!==m){try{const r=await rcmd(['SET','astra-db',m]);if(r.error)throw new Error(r.error);sent['astra-db']=m}catch(e){ok=false;{store.err='astra-db: '+e.message;store.errAt=Date.now();console.error('Upstash gagal astra-db',e.message)}}}
  if(ok){needMig=0;store.ok=Date.now();store.err=''}return ok}
 function reconcile(w,src){let n=0;for(const id in w){const u=db.users[id],x=w[id];if(!u||!x)continue;bal(u);if((x[1]||0)>(u.wv||0)){u.sal=Math.max(0,Math.floor(+x[0]||0));u.wv=x[1];if(Array.isArray(x[2])&&x[2].length)u.stx=x[2];n++}}if(n)console.log('Dompet dipulihkan dari '+src+': '+n+' akun');return n}
-async function loadCfg(){try{const rc=await rcmd(['GET','astra-cfg']);if(rc.result){sent['astra-cfg']=rc.result;const c=JSON.parse(rc.result);db.pay=c.pay||{};if(c.pv)db.payv=c.pv;if(c.prices&&Object.keys(c.prices).length&&!Object.keys(db.prices||{}).length)db.prices=c.prices;if(c.wp){db.wp=c.wp;db.wpf=db.wpf||{};for(const fid in (c.wpc||{})){const n=c.wpc[fid],ks=[];for(let i=0;i<n;i++)ks.push(['GET','astra-wpf:'+fid+':'+i]);const rr=await rpipe(ks);if(!Array.isArray(rr)||rr.some(x=>!x||x.error||x.result==null))throw new Error('wallpaper chunk gagal');db.wpf[fid]=rr.map((x,i)=>{sent['astra-wpf:'+fid+':'+i]=x.result;return x.result}).join('')}}}}catch(e){console.error('loadCfg:',e.message);if(/wallpaper/.test(e.message)){db.wp=null;db.wpf={}}}}
+async function wpFetch(f,m){const p=wpPath(f);try{if(fs.statSync(p).size===m.n)return}catch{}
+ const fd=fs.openSync(p,'w');try{for(let i=0;i<m.c;i+=10){const ks=[];for(let j=i;j<Math.min(m.c,i+10);j++)ks.push(['GET','astra-wpb:'+f+':'+j]);const rr=await rpipe(ks);if(!Array.isArray(rr)||rr.some(x=>!x||x.error||x.result==null))throw new Error('wallpaper potongan gagal dimuat');for(const x of rr)fs.writeSync(fd,Buffer.from(x.result,'base64'))}}finally{fs.closeSync(fd)}
+ if(fs.statSync(p).size!==m.n)throw new Error('wallpaper ukuran tidak cocok')}
+async function loadCfg(){let c=null;try{const rc=await rcmd(['GET','astra-cfg']);if(rc.error)throw new Error(rc.error);if(rc.result){sent['astra-cfg']=rc.result;c=JSON.parse(rc.result)}}catch(e){console.error('loadCfg:',e.message);return}
+ if(!c)return;db.pay=c.pay||{};if(c.pv)db.payv=c.pv;if(c.prices&&Object.keys(c.prices).length&&!Object.keys(db.prices||{}).length)db.prices=c.prices;
+ if(c.wp){db.wp=c.wp;db.wpf={};
+  for(const f in (c.wpm||{})){const m=c.wpm[f];await wpFetch(f,m);db.wpf[f]={n:m.n,m:m.m};wpSent[f]=m}
+  for(const f in (c.wpc||{})){if(db.wpf[f])continue;const ks=[];for(let i=0;i<c.wpc[f];i++)ks.push(['GET','astra-wpf:'+f+':'+i]);const rr=await rpipe(ks);if(!Array.isArray(rr)||rr.some(x=>!x||x.error||x.result==null))throw new Error('wallpaper potongan lama gagal dimuat');const mm=/^data:([^;]+);base64,([\s\S]*)$/.exec(rr.map(x=>x.result).join(''));if(!mm)continue;const bf=Buffer.from(mm[2],'base64');fs.writeFileSync(wpPath(f),bf);db.wpf[f]={n:bf.length,m:mm[1]};wpLeg.push([f,c.wpc[f]])}}}
 async function loadUp(){const r=await rcmd(['GET','astra-db']);if(r.error||(r.result===undefined))throw new Error(r.error||'respons Upstash tidak valid');if(!r.result)return;const m=JSON.parse(r.result);sent['astra-db']=r.result;
  const legacy=Array.isArray(m.com)&&m.com.length>0||Object.values(m.users||{}).some(u=>u&&(u.avatar||u.bg||u.wall||(u.data&&Object.keys(u.data).length)))||!m.dmk;
  if(legacy){db=m;needMig=1;MX();clean();await loadCfg();try{const rw=await rcmd(['GET','astra-wal']);if(rw.result)reconcile(JSON.parse(rw.result),'Upstash (cadangan)')}catch(e){}return}
@@ -78,7 +98,6 @@ const pub=u=>({id:u.id,name:u.name,avatar:u.avatar,status:u.status,role:isRoot(u
 const me=u=>({...pub(u),adm:isRoot(u)?'root':u.adm||'',email:u.email,bg:u.bg,wall:u.wall,fx:u.fx,sal:bal(u),data:dat(u)});
 
 /* ===== VIDEO WALLPAPER (kartu Saldo & Premium) – diatur Owner utama, tampil ke semua pengguna ===== */
-const wpBc={};function wpBuf(fid,b64){if(!wpBc[fid]){const ks=Object.keys(wpBc);if(ks.length>1)delete wpBc[ks[0]];wpBc[fid]=Buffer.from(b64,'base64')}return wpBc[fid]}
 const WPMAX=31457280,wpPend={};
 const WPD=()=>({k:'',src:'',fid:'',mime:'',t:'',tp:'tr',ts:'iklan',z:1,x:50,y:50,st:0,en:0,mu:0});
 function wpSlot(o,old){o=o||{};const d=WPD(),n=(v,a,b,df)=>{v=+v;return isFinite(v)?Math.min(b,Math.max(a,v)):df};
@@ -96,13 +115,19 @@ const srv=http.createServer((q,r)=>{
 
  if(q.method==='POST'&&p0==='/api/wpup'){const k=db.tok[(q.headers.authorization||'').slice(7)],u=k&&db.users[k.id];
   if(!u||k.ep!==u.ep||!isRoot(u)){q.resume();return ER(r,403,'Hanya Owner utama')}
-  const mime=String(q.headers['x-mime']||'').toLowerCase(),len=+q.headers['content-length']||0;
-  if(!/^(video\/(mp4|webm|quicktime)|image\/(png|jpeg|webp|gif))$/.test(mime)){q.resume();return ER(r,400,'File harus video MP4/WebM/MOV atau gambar PNG/JPG/WebP/GIF')}
-  if(len>WPMAX){q.resume();return ER(r,413,'File terlalu besar (maks 30 MB)')}
-  const parts=[];let n=0,over=0;q.on('data',d=>{if(over)return;n+=d.length;if(n>WPMAX){over=1;parts.length=0;ER(r,413,'File terlalu besar (maks 30 MB)');return}parts.push(d)});
-  q.on('end',()=>{if(over)return;if(!n)return ER(r,400,'File kosong');const now=Date.now();for(const f in wpPend)if(now-wpPend[f].t>18e5)delete wpPend[f];
-   const ks=Object.keys(wpPend);if(ks.length>=2)delete wpPend[ks[0]];
-   const fid=cr.randomBytes(8).toString('hex');wpPend[fid]={t:now,d:'data:'+mime+';base64,'+Buffer.concat(parts).toString('base64'),n};return J(r,200,{ok:1,fid,size:n})});return}
+  const P2=new URLSearchParams(q.url.split('?')[1]||''),id=(P2.get('id')||'').replace(/[^a-f0-9]/g,'').slice(0,16),off=Math.floor(+P2.get('off'))||0,total=Math.floor(+P2.get('total'))||0,mime=String(q.headers['x-mime']||'').toLowerCase();
+  if(id.length<8){q.resume();return ER(r,400,'ID upload tidak valid')}
+  const parts=[];let n=0,over=0;q.on('data',d=>{if(over)return;n+=d.length;if(n>2.2e6){over=1;parts.length=0;ER(r,413,'Potongan terlalu besar');return}parts.push(d)});
+  q.on('end',()=>{if(over)return;const now=Date.now();for(const f in wpPend)if(now-wpPend[f].t>18e5){wpUnl(wpTmp(f));delete wpPend[f]}
+   let pd=wpPend[id];
+   if(off===0){if(!/^(video\/(mp4|webm|quicktime)|image\/(png|jpeg|webp|gif))$/.test(mime))return ER(r,400,'File harus video MP4/WebM/MOV atau gambar PNG/JPG/WebP/GIF');
+    if(!(total>0))return ER(r,400,'File kosong');if(total>WPMAX)return ER(r,413,'File terlalu besar (maks 30 MB)');
+    const ks=Object.keys(wpPend).filter(f=>f!==id);while(ks.length>=2){const f=ks.shift();wpUnl(wpTmp(f));delete wpPend[f]}
+    try{fs.writeFileSync(wpTmp(id),'')}catch(e){return ER(r,500,'Disk server tidak bisa ditulis')}pd=wpPend[id]={t:now,n:0,total,mime,done:0}}
+   if(!pd)return J(r,409,{e:'Sesi upload tidak ditemukan, ulangi',size:0});
+   if(off!==pd.n)return J(r,409,{e:'Urutan potongan tidak cocok',size:pd.n});
+   if(pd.n+n>pd.total)return ER(r,400,'Ukuran melebihi total');
+   fs.appendFile(wpTmp(id),Buffer.concat(parts),er=>{if(er)return ER(r,500,'Gagal menulis file di server');pd.n+=n;pd.t=Date.now();if(pd.n===pd.total)pd.done=1;J(r,200,{ok:1,size:pd.n,done:pd.done,fid:id})})});return}
  let b='',big=0;q.on('data',d=>{if(big)return;b+=d;if(b.length>7.4e6){big=1;b='';ER(r,413,'Ukuran file terlalu besar untuk dikirim')}});
  q.on('end',()=>{if(big)return;try{h(q,r,b?JSON.parse(b):{})}catch(e){console.error(e);ER(r,500,'Kesalahan di server')}})
 });(async()=>{
@@ -110,6 +135,8 @@ const srv=http.createServer((q,r)=>{
  if(RU){let ok=0;for(let i=0;i<6&&!ok;i++){try{await loadUp();ok=1;console.log('Data dimuat dari Upstash')}catch(e){console.error('Gagal memuat Upstash (percobaan '+(i+1)+')',e.message);await new Promise(r=>setTimeout(r,2500*(i+1)))}}
   if(!ok){console.error('Upstash tidak bisa dimuat. Server berhenti agar data cloud tidak tertimpa data lama; Render akan menyalakan ulang otomatis.');process.exit(1)}loaded=true}
  if(localDb&&localDb.users){const w={};for(const id in localDb.users){const u=localDb.users[id];if(u&&u.sal!==undefined)w[id]=[u.sal,u.wv||0,u.stx]}reconcile(w,'file lokal');sv()}
+ try{for(const f of fs.readdirSync(WPDIR))if(f.startsWith('t-')||!(db.wpf&&db.wpf[f]))wpUnl(path.join(WPDIR,f))}catch{}
+ srv.requestTimeout=10*60e3;srv.headersTimeout=65e3;
  srv.listen(PORT,()=>console.log('ASTRA server di port '+PORT))})();
 
 /* ===== Bot keamanan + WebSocket ===== */
@@ -292,9 +319,10 @@ function h(q,r,b){
  if(c==='avatar'&&m==='GET'){const x=db.users[S[2]],mm=x&&x.avatar&&/^data:(image\/[\w.+-]+);base64,(.+)$/.exec(x.avatar);if(!mm)return ER(r,404,'Tidak ada foto');r.writeHead(200,{'content-type':mm[1],'cache-control':'public,max-age=86400','access-control-allow-origin':'*'});return r.end(Buffer.from(mm[2],'base64'))}
 
  if(c==='wallpaper'&&m==='GET')return J(r,200,{wp:wpPub(),v:db.wpv||0});
- if(c==='wpfile'&&m==='GET'){const t=db.wpf&&db.wpf[S[2]],mm=t&&/^data:([\w\/.+-]+);base64,(.+)$/.exec(t);if(!mm)return ER(r,404,'Tidak ada file');const bf=wpBuf(S[2],mm[2]),tot=bf.length,H={'content-type':mm[1],'accept-ranges':'bytes','cache-control':'public,max-age=31536000,immutable','access-control-allow-origin':'*'},rg=/^bytes=(\d*)-(\d*)$/.exec(q.headers.range||'');
-  if(rg&&(rg[1]||rg[2])){let a=rg[1]?+rg[1]:Math.max(0,tot-+rg[2]),e=rg[1]&&rg[2]?Math.min(+rg[2],tot-1):tot-1;if(a>e||a>=tot){r.writeHead(416,{'content-range':'bytes */'+tot});return r.end()}r.writeHead(206,{...H,'content-range':`bytes ${a}-${e}/${tot}`,'content-length':e-a+1});return r.end(bf.subarray(a,e+1))}
-  r.writeHead(200,{...H,'content-length':tot});return r.end(bf)}
+ if(c==='wpfile'&&m==='GET'){const fid=String(S[2]||'').replace(/[^\w]/g,''),mt=db.wpf&&db.wpf[fid];if(!mt)return ER(r,404,'Tidak ada file');let st;try{st=fs.statSync(wpPath(fid))}catch{return ER(r,404,'File belum siap')}
+  const tot=st.size,H={'content-type':mt.m,'accept-ranges':'bytes','cache-control':'public,max-age=31536000,immutable','access-control-allow-origin':'*'},rg=/^bytes=(\d*)-(\d*)$/.exec(q.headers.range||'');let a=0,e=tot-1,code=200;
+  if(rg&&(rg[1]||rg[2])){a=rg[1]?+rg[1]:Math.max(0,tot-+rg[2]);e=rg[1]&&rg[2]?Math.min(+rg[2],tot-1):tot-1;if(a>e||a>=tot){r.writeHead(416,{'content-range':'bytes */'+tot});return r.end()}code=206;H['content-range']=`bytes ${a}-${e}/${tot}`}
+  H['content-length']=e-a+1;r.writeHead(code,H);const rs=fs.createReadStream(wpPath(fid),{start:a,end:e});rs.on('error',()=>r.destroy());r.on('close',()=>rs.destroy());rs.pipe(r);return}
  const k=db.tok[(q.headers.authorization||'').slice(7)],u=k&&db.users[k.id];
  if(!u||k.ep!==u.ep)return ER(r,401,'Sesi habis, silakan masuk lagi');
   seen[u.id]=Date.now();
@@ -436,19 +464,21 @@ function h(q,r,b){
     if(!link&&!qr)delete db.pay[id];else db.pay[id]={link,qr,note:String(b.note||'').slice(0,80)}}
    db.payv=Date.now();sv();alog(u,'pembayaran',id+(b.off?' dihapus':' diperbarui'));return J(r,200,{ok:1,pay:db.pay})}
   if(a==='wallpaper'){if(!isRoot(u))return ER(r,403,'Hanya Owner utama');
-   if(b.act==='get')return J(r,200,{wp:wpPub(),v:db.wpv||0,files:Object.fromEntries(Object.entries(db.wpf||{}).map(([k,v])=>[k,v.length]))});
-   if(b.act==='reset'){db.wp=null;db.wpf={};db.wpv=Date.now();sv();alog(u,'wallpaper','kembali ke bawaan');return J(r,200,{ok:1,wp:null,v:db.wpv})}
+   if(b.act==='get')return J(r,200,{wp:wpPub(),v:db.wpv||0,files:Object.fromEntries(Object.entries(db.wpf||{}).map(([k,v])=>[k,v.n]))});
+   if(b.act==='reset'){for(const f in (db.wpf||{}))wpUnl(wpPath(f));db.wp=null;db.wpf={};db.wpv=Date.now();sv();alog(u,'wallpaper','kembali ke bawaan');return J(r,200,{ok:1,wp:null,v:db.wpv})}
    const old=db.wp||{},nf=Object.assign({},db.wpf||{}),mk=(o,od)=>{if(!o||o.k===''||o.k==null)return null;
-    if(o.k==='file'&&o.file){const f=String(o.file);const mm=/^data:((?:video\/(?:mp4|webm|quicktime))|(?:image\/(?:png|jpeg|webp|gif)));base64,[A-Za-z0-9+\/=]+$/.exec(f);if(!mm)return'bad';if(f.length>7e6)return'big';const fid=cr.createHash('sha1').update(f.length+f.slice(0,200)+f.slice(-200)+Date.now()).digest('hex').slice(0,16);nf[fid]=f;return wpSlot({...o,fid,mime:mm[1]})}
-    if(o.k==='file'&&o.fid&&wpPend[o.fid]){const pd=wpPend[o.fid];nf[o.fid]=pd.d;return wpSlot({...o,mime:/^data:([^;]+)/.exec(pd.d)[1]})}
+    if(o.k==='file'&&o.file)return'bad';
+    if(o.k==='file'&&o.fid&&wpPend[o.fid]&&wpPend[o.fid].done){const pd=wpPend[o.fid];nf[o.fid]={n:pd.n,m:pd.mime,tmp:1};return wpSlot({...o,mime:pd.mime})}
     if(o.k==='file'&&!(o.fid&&nf[o.fid]))return'nofile';return wpSlot(o,od)};
    const A=mk(b.a,old.a),B=b.mode==='split'?mk(b.b,old.b):null;
    if(A==='bad'||B==='bad')return ER(r,400,'File harus video MP4/WebM/MOV atau gambar PNG/JPG/WebP/GIF');if(A==='big'||B==='big')return ER(r,413,'File terlalu besar. Pangkas/kompres dulu atau pakai link.');
    if(A==='nofile'||B==='nofile')return ER(r,400,'File tidak ditemukan, unggah ulang');
    if(b.a&&b.a.k==='link'&&!A||b.mode==='split'&&b.b&&b.b.k==='link'&&!B)return ER(r,400,'Link harus diawali https://');
-   if(!A&&!B){db.wp=null;db.wpf={}}else{const keep=new Set([A&&A.fid,B&&B.fid].filter(Boolean));for(const k in nf)if(!keep.has(k))delete nf[k];db.wpf=nf;db.wp={mode:b.mode==='split'?'split':'same',a:A,b:B}}
-   for(const f of [A&&A.fid,B&&B.fid])if(f)delete wpPend[f];db.wpv=Date.now();sv();fast();alog(u,'wallpaper','video lama dihapus dari server · '+(db.wp?db.wp.mode+' · '+[A,B].filter(Boolean).map(x=>x.k).join('/'):'bawaan'));return J(r,200,{ok:1,wp:wpPub(),v:db.wpv})}
-  if(a==='backup'){const us={};for(const id in db.users){const x={...db.users[id]};for(const f of HEAVY)delete x[f];us[id]=x}alog(u,'unduh cadangan','');return J(r,200,{v:1,t:Date.now(),users:us,mail:db.mail,codes:db.codes,used:db.used,vip:db.vip,prices:db.prices||{},pay:db.pay||{},wp:db.wp||null,wpf:db.wpf||{},words:db.words||[],next:db.next})}
+   const keep=new Set([A&&A.fid,B&&B.fid].filter(Boolean));try{for(const k of keep)if(nf[k]&&nf[k].tmp){fs.renameSync(wpTmp(k),wpPath(k));delete nf[k].tmp}}catch(e){console.error('wallpaper pindah file',e.message);return ER(r,500,'Gagal menyimpan file di server')}
+   for(const k in nf)if(!keep.has(k)){wpUnl(wpPath(k));delete nf[k]}
+   if(!A&&!B){db.wp=null;db.wpf={}}else{db.wpf=nf;db.wp={mode:b.mode==='split'?'split':'same',a:A,b:B}}
+   for(const f of [A&&A.fid,B&&B.fid])if(f)delete wpPend[f];for(const f in wpPend)if(Date.now()-wpPend[f].t>18e5){wpUnl(wpTmp(f));delete wpPend[f]}db.wpv=Date.now();sv();fast();alog(u,'wallpaper','video lama dihapus dari server · '+(db.wp?db.wp.mode+' · '+[A,B].filter(Boolean).map(x=>x.k).join('/'):'bawaan'));return J(r,200,{ok:1,wp:wpPub(),v:db.wpv})}
+  if(a==='backup'){const us={};for(const id in db.users){const x={...db.users[id]};for(const f of HEAVY)delete x[f];us[id]=x}alog(u,'unduh cadangan','');return J(r,200,{v:1,t:Date.now(),users:us,mail:db.mail,codes:db.codes,used:db.used,vip:db.vip,prices:db.prices||{},pay:db.pay||{},words:db.words||[],next:db.next})}
   if(a==='restore'){const d=b.data;if(!d||d.v!==1||typeof d.users!=='object')return ER(r,400,'File cadangan tidak valid');let add=0,upd=0;
    for(const id in d.users){const bu=d.users[id];if(!bu||!bu.email||!bu.ph||!bu.salt)continue;const cu=db.users[id];
     if(!cu){if(db.mail[bu.email]&&db.mail[bu.email]!==id)continue;db.users[id]={...bu,avatar:'',bg:'',wall:''};db.mail[bu.email]=id;add++;continue}
@@ -456,7 +486,7 @@ function h(q,r,b){
     if(bu.data&&(!cu.data||!Object.keys(cu.data).length))cu.data=bu.data}
    for(const k in (d.codes||{}))if(!db.codes[k])db.codes[k]=d.codes[k];for(const k in (d.used||{}))if(!db.used[k])db.used[k]=d.used[k];
    if(d.prices&&(b.force||!Object.keys(db.prices||{}).length))db.prices=d.prices;if(d.pay&&(b.force||!Object.keys(db.pay||{}).length)){db.pay=d.pay;db.payv=Date.now()}
-   if(d.wp&&d.wpf&&(b.force||!db.wp)){db.wp=d.wp;db.wpf=d.wpf;db.wpv=Date.now()}if(Array.isArray(d.words)&&!(db.words||[]).length)db.words=d.words;db.next=Math.max(db.next,+d.next||0);fast();sv();alog(u,'pulihkan cadangan',add+' akun baru, '+upd+' saldo');return J(r,200,{ok:1,add,upd})}
+   if(Array.isArray(d.words)&&!(db.words||[]).length)db.words=d.words;db.next=Math.max(db.next,+d.next||0);fast();sv();alog(u,'pulihkan cadangan',add+' akun baru, '+upd+' saldo');return J(r,200,{ok:1,add,upd})}
   if(a==='prices')return J(r,200,{base:Object.fromEntries(Object.entries(PTAB).map(([k,v])=>[k,{p:v.p,n:v.n,d:v.d}])),pr:ptab(),raw:db.prices||{},pay:db.pay||{}})
   if(a==='txlog')return J(r,200,{list:(db.glog||[]).slice(0,100)})
   if(a==='words'){db.words=db.words||[];const w=String(b.w||'').trim().toLowerCase().slice(0,30);

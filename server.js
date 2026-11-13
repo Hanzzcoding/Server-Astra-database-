@@ -48,7 +48,7 @@ setInterval(async()=>{if(!dirty||busy)return;busy=1;try{writeLocal();if(RU&&Date
 function pruneTok(){const n=Date.now(),per={};const ks=Object.keys(db.tok).sort((a,b)=>(db.tok[b].c||0)-(db.tok[a].c||0));let ch=0;for(const t of ks){const k=db.tok[t];per[k.id]=(per[k.id]||0)+1;if(n-(k.c||0)>60*864e5||per[k.id]>8||!db.users[k.id]){delete db.tok[t];ch=1}}if(ch)sv()}
 setInterval(pruneTok,36e5);
 const ph=(p,s)=>cr.scryptSync(p,s,32).toString('hex');
-const J=(r,c,o)=>{r.writeHead(c,{'content-type':'application/json','access-control-allow-origin':'*','access-control-allow-headers':'content-type,authorization','access-control-allow-methods':'GET,POST,OPTIONS'});r.end(JSON.stringify(o))};
+const J=(r,c,o)=>{r.writeHead(c,{'content-type':'application/json','access-control-allow-origin':'*','access-control-allow-headers':'content-type,authorization,x-mime','access-control-allow-methods':'GET,POST,OPTIONS'});r.end(JSON.stringify(o))};
 const ER=(r,c,e)=>J(r,c,{e});
 const flush=()=>{try{fs.writeFileSync(FILE,JSON.stringify(db,rep))}catch{}return RU?Promise.race([pushUp(),new Promise(r=>setTimeout(r,20000))]).catch(()=>{}):Promise.resolve()};
 for(const sg of['SIGTERM','SIGINT'])process.on(sg,()=>flush().finally(()=>process.exit(0)));
@@ -78,7 +78,8 @@ const pub=u=>({id:u.id,name:u.name,avatar:u.avatar,status:u.status,role:isRoot(u
 const me=u=>({...pub(u),adm:isRoot(u)?'root':u.adm||'',email:u.email,bg:u.bg,wall:u.wall,fx:u.fx,sal:bal(u),data:dat(u)});
 
 /* ===== VIDEO WALLPAPER (kartu Saldo & Premium) – diatur Owner utama, tampil ke semua pengguna ===== */
-const wpBc={};function wpBuf(fid,b64){if(!wpBc[fid]){const ks=Object.keys(wpBc);if(ks.length>2)delete wpBc[ks[0]];wpBc[fid]=Buffer.from(b64,'base64')}return wpBc[fid]}
+const wpBc={};function wpBuf(fid,b64){if(!wpBc[fid]){const ks=Object.keys(wpBc);if(ks.length>1)delete wpBc[ks[0]];wpBc[fid]=Buffer.from(b64,'base64')}return wpBc[fid]}
+const WPMAX=31457280,wpPend={};
 const WPD=()=>({k:'',src:'',fid:'',mime:'',t:'',tp:'tr',ts:'iklan',z:1,x:50,y:50,st:0,en:0,mu:0});
 function wpSlot(o,old){o=o||{};const d=WPD(),n=(v,a,b,df)=>{v=+v;return isFinite(v)?Math.min(b,Math.max(a,v)):df};
  const k=['file','link'].includes(o.k)?o.k:'';let src=String(o.src||'').trim();
@@ -90,7 +91,18 @@ function wpPub(){const w=db.wp;if(!w)return null;const f=s=>s&&(s.k==='file'&&!(
 const srv=http.createServer((q,r)=>{
  const ip=String(q.headers['x-forwarded-for']||'').split(',')[0].trim()||q.socket.remoteAddress;hits[ip]=(hits[ip]||0)+1;
  if(q.method==='OPTIONS')return J(r,204,{});
+ const p0=q.url.split('?')[0];
  if(hits[ip]>600)return ER(r,429,'Terlalu banyak permintaan, tunggu sebentar');
+
+ if(q.method==='POST'&&p0==='/api/wpup'){const k=db.tok[(q.headers.authorization||'').slice(7)],u=k&&db.users[k.id];
+  if(!u||k.ep!==u.ep||!isRoot(u)){q.resume();return ER(r,403,'Hanya Owner utama')}
+  const mime=String(q.headers['x-mime']||'').toLowerCase(),len=+q.headers['content-length']||0;
+  if(!/^(video\/(mp4|webm|quicktime)|image\/(png|jpeg|webp|gif))$/.test(mime)){q.resume();return ER(r,400,'File harus video MP4/WebM/MOV atau gambar PNG/JPG/WebP/GIF')}
+  if(len>WPMAX){q.resume();return ER(r,413,'File terlalu besar (maks 30 MB)')}
+  const parts=[];let n=0,over=0;q.on('data',d=>{if(over)return;n+=d.length;if(n>WPMAX){over=1;parts.length=0;ER(r,413,'File terlalu besar (maks 30 MB)');return}parts.push(d)});
+  q.on('end',()=>{if(over)return;if(!n)return ER(r,400,'File kosong');const now=Date.now();for(const f in wpPend)if(now-wpPend[f].t>18e5)delete wpPend[f];
+   const ks=Object.keys(wpPend);if(ks.length>=2)delete wpPend[ks[0]];
+   const fid=cr.randomBytes(8).toString('hex');wpPend[fid]={t:now,d:'data:'+mime+';base64,'+Buffer.concat(parts).toString('base64'),n};return J(r,200,{ok:1,fid,size:n})});return}
  let b='',big=0;q.on('data',d=>{if(big)return;b+=d;if(b.length>7.4e6){big=1;b='';ER(r,413,'Ukuran file terlalu besar untuk dikirim')}});
  q.on('end',()=>{if(big)return;try{h(q,r,b?JSON.parse(b):{})}catch(e){console.error(e);ER(r,500,'Kesalahan di server')}})
 });(async()=>{
@@ -428,13 +440,14 @@ function h(q,r,b){
    if(b.act==='reset'){db.wp=null;db.wpf={};db.wpv=Date.now();sv();alog(u,'wallpaper','kembali ke bawaan');return J(r,200,{ok:1,wp:null,v:db.wpv})}
    const old=db.wp||{},nf=Object.assign({},db.wpf||{}),mk=(o,od)=>{if(!o||o.k===''||o.k==null)return null;
     if(o.k==='file'&&o.file){const f=String(o.file);const mm=/^data:((?:video\/(?:mp4|webm|quicktime))|(?:image\/(?:png|jpeg|webp|gif)));base64,[A-Za-z0-9+\/=]+$/.exec(f);if(!mm)return'bad';if(f.length>7e6)return'big';const fid=cr.createHash('sha1').update(f.length+f.slice(0,200)+f.slice(-200)+Date.now()).digest('hex').slice(0,16);nf[fid]=f;return wpSlot({...o,fid,mime:mm[1]})}
+    if(o.k==='file'&&o.fid&&wpPend[o.fid]){const pd=wpPend[o.fid];nf[o.fid]=pd.d;return wpSlot({...o,mime:/^data:([^;]+)/.exec(pd.d)[1]})}
     if(o.k==='file'&&!(o.fid&&nf[o.fid]))return'nofile';return wpSlot(o,od)};
    const A=mk(b.a,old.a),B=b.mode==='split'?mk(b.b,old.b):null;
-   if(A==='bad'||B==='bad')return ER(r,400,'File harus video MP4/WebM/MOV atau gambar PNG/JPG/WebP/GIF');if(A==='big'||B==='big')return ER(r,413,'File terlalu besar (maks ±5 MB). Pangkas/kompres dulu atau pakai link.');
+   if(A==='bad'||B==='bad')return ER(r,400,'File harus video MP4/WebM/MOV atau gambar PNG/JPG/WebP/GIF');if(A==='big'||B==='big')return ER(r,413,'File terlalu besar. Pangkas/kompres dulu atau pakai link.');
    if(A==='nofile'||B==='nofile')return ER(r,400,'File tidak ditemukan, unggah ulang');
    if(b.a&&b.a.k==='link'&&!A||b.mode==='split'&&b.b&&b.b.k==='link'&&!B)return ER(r,400,'Link harus diawali https://');
    if(!A&&!B){db.wp=null;db.wpf={}}else{const keep=new Set([A&&A.fid,B&&B.fid].filter(Boolean));for(const k in nf)if(!keep.has(k))delete nf[k];db.wpf=nf;db.wp={mode:b.mode==='split'?'split':'same',a:A,b:B}}
-   db.wpv=Date.now();sv();fast();alog(u,'wallpaper',(db.wp?db.wp.mode+' · '+[A,B].filter(Boolean).map(x=>x.k).join('/'):'bawaan'));return J(r,200,{ok:1,wp:wpPub(),v:db.wpv})}
+   for(const f of [A&&A.fid,B&&B.fid])if(f)delete wpPend[f];db.wpv=Date.now();sv();fast();alog(u,'wallpaper','video lama dihapus dari server · '+(db.wp?db.wp.mode+' · '+[A,B].filter(Boolean).map(x=>x.k).join('/'):'bawaan'));return J(r,200,{ok:1,wp:wpPub(),v:db.wpv})}
   if(a==='backup'){const us={};for(const id in db.users){const x={...db.users[id]};for(const f of HEAVY)delete x[f];us[id]=x}alog(u,'unduh cadangan','');return J(r,200,{v:1,t:Date.now(),users:us,mail:db.mail,codes:db.codes,used:db.used,vip:db.vip,prices:db.prices||{},pay:db.pay||{},wp:db.wp||null,wpf:db.wpf||{},words:db.words||[],next:db.next})}
   if(a==='restore'){const d=b.data;if(!d||d.v!==1||typeof d.users!=='object')return ER(r,400,'File cadangan tidak valid');let add=0,upd=0;
    for(const id in d.users){const bu=d.users[id];if(!bu||!bu.email||!bu.ph||!bu.salt)continue;const cu=db.users[id];

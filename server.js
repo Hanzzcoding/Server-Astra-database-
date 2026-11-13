@@ -5,7 +5,7 @@ const PORT=process.env.PORT||3000,FILE=process.env.DB||'./astra-db.json',MAXU=+p
 const OWN=(process.env.OWNERS||'').toLowerCase().split(',').filter(Boolean);
 const MK=['img','vid','file','aud'];
 let db={users:{},mail:{},tok:{},com:[],dm:{},next:100001};try{db=JSON.parse(fs.readFileSync(FILE))}catch{}
-const MX=()=>{db.vip=db.vip||{};db.used=db.used||{};db.codes=db.codes||{};const n=Date.now();for(const t in db.tok)if(!db.tok[t].c)db.tok[t].c=n};MX();
+const MX=()=>{for(const id in db.users){const u=db.users[id],d=u.data||{};if(!u.pl&&d.plan&&d.plan!=='free')u.pl={id:d.plan,exp:+d.planExp||0}}db.vip=db.vip||{};db.used=db.used||{};db.codes=db.codes||{};const n=Date.now();for(const t in db.tok)if(!db.tok[t].c)db.tok[t].c=n};MX();
 const clean=()=>{const f=a=>(a||[]).filter(m=>!MK.includes(m.k)||m.b);db.com=f(db.com);for(const k in db.dm)db.dm[k]=f(db.dm[k])};clean();
 let dirty=0,lastUp=0,loaded=!process.env.UPSTASH_REDIS_REST_URL;const sv=()=>dirty=1,fast=()=>{dirty=1;lastUp=0};
 // Penyimpanan permanen (opsional, gratis): isi env UPSTASH_REDIS_REST_URL dan UPSTASH_REDIS_REST_TOKEN
@@ -65,12 +65,16 @@ const chal={};setInterval(()=>{const n=Date.now();for(const k in chal)if(chal[k]
 const bal=u=>{if(u.sal===undefined){const d=u.data||{};u.sal=Math.max(0,Math.floor(+d.saldo||0));u.stx=Array.isArray(d.tx)?d.tx.slice(0,100):[]}return u.sal};
 const addTx=(u,amount,note,ref)=>{bal(u);u.wv=(u.wv||0)+1;fast();(db.glog=db.glog||[]).unshift({t:Date.now(),u:u.name,id:u.id,a:amount,n:String(note||'').slice(0,70)});if(db.glog.length>150)db.glog.length=150;u.stx=[{t:Date.now(),amount,note,ref},...(u.stx||[])].slice(0,100)};
 const credit=(u,a,note,ref)=>{u.sal=bal(u)+a;addTx(u,a,note,ref)};
-const dat=u=>({...(u.data||{}),saldo:bal(u),tx:u.stx||[]});
+const planOf=u=>{const p=u.pl;if(p)return(!p.exp||p.exp>Date.now())?p.id:'free';return(u.data||{}).plan||'free'};
+const pexpOf=u=>{const p=u.pl;if(p)return(!p.exp||p.exp>Date.now())?(p.exp||0):0;return(u.data||{}).planExp||0};
+const setPl=(u,id,days,ext)=>{const n=Date.now();if(id==='free'){u.pl={id:'free',exp:0};return}const same=ext&&u.pl&&u.pl.id===id&&u.pl.exp&&u.pl.exp>n;u.pl={id,exp:days?(same?u.pl.exp:n)+days*864e5:0}};
+const plInfo=u=>({id:planOf(u),exp:pexpOf(u)});
+const dat=u=>({...(u.data||{}),saldo:bal(u),tx:u.stx||[],plan:planOf(u),planExp:pexpOf(u)});
 const nc=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,''),fmt=s=>(nc(s).match(/.{1,4}/g)||[]).join('-');
 const seen={};
 const isOn=id=>seen[id]&&Date.now()-seen[id]<120000||[...clients].some(c=>c.u.id===id);
 
-const pub=u=>({id:u.id,name:u.name,avatar:u.avatar,status:u.status,role:isRoot(u)?'root':isAdm(u)?'owner':RL.includes((u.data||{}).plan)?u.data.plan:'free',av:u.avatar?(u.avt||1):0});
+const pub=u=>({id:u.id,name:u.name,avatar:u.avatar,status:u.status,role:isRoot(u)?'root':isAdm(u)?'owner':RL.includes(planOf(u))?planOf(u):'free',av:u.avatar?(u.avt||1):0});
 const me=u=>({...pub(u),adm:isRoot(u)?'root':u.adm||'',email:u.email,bg:u.bg,wall:u.wall,fx:u.fx,sal:bal(u),data:dat(u)});
 const srv=http.createServer((q,r)=>{
  const ip=String(q.headers['x-forwarded-for']||'').split(',')[0].trim()||q.socket.remoteAddress;hits[ip]=(hits[ip]||0)+1;
@@ -239,13 +243,13 @@ function redeemCode(u,raw){
   if(!o||!db.users[o]){db.vip[hv]=u.id;credit(u,200000,'Redeem kode Owner')}
   if(u.adm!=='root')u.adm='vip';return done({kind:'owner',unlimited:1,adm:u.adm})}
  const sc=SCODES[hv];if(sc){if(db.used[hv])return[409,{e:'Kode redeem saldo Astra ini telah dipakai dan tidak bisa dipakai lagi.'}];db.used[hv]=u.id;credit(u,sc.a,'Redeem kode saldo');return done({kind:'saldo',amount:sc.a})}
- const hp=sha('astra-v1|'+up),pid=CODES[hp];if(pid){if(db.used[hp])return[409,{e:'Kode ini sudah dipakai.'}];db.used[hp]=u.id;return done({kind:'plan',plan:pid,days:null})}
+ const hp=sha('astra-v1|'+up),pid=CODES[hp];if(pid){if(db.used[hp])return[409,{e:'Kode ini sudah dipakai.'}];db.used[hp]=u.id;setPl(u,pid,(PTAB[pid]||{}).d||30,true);return done({kind:'plan',plan:pid,days:null})}
  const c=db.codes[nc(code)];if(!c)return[400,{e:'Kode tidak valid.'}];
  if(c.used)return[409,{e:'Kode ini sudah dipakai dan tidak bisa dipakai lagi.'}];
  if(c.exp&&c.exp<n)return[410,{e:'Kode ini sudah kedaluwarsa.'}];
  c.used={u:u.id,t:n};
  if(c.t==='saldo'){credit(u,c.a,'Redeem kode saldo');return done({kind:'saldo',amount:c.a})}
- return done({kind:'plan',plan:c.plan,days:c.days})}
+ setPl(u,c.plan,c.days==null?((PTAB[c.plan]||{}).d||30):c.days,true);return done({kind:'plan',plan:c.plan,days:c.days})}
 function h(q,r,b){
  const[p,qs]=q.url.split('?'),P=new URLSearchParams(qs||''),S=p.split('/').filter(Boolean),c=S[1],m=q.method;
  if(S[0]!=='api')return ER(r,404,'Tidak ditemukan');
@@ -268,7 +272,7 @@ function h(q,r,b){
   seen[u.id]=Date.now();
  if(db.maint&&!isAdm(u)&&c!=='hb')return ER(r,503,'Server sedang pemeliharaan: '+db.maint);
  if(c==='pay'&&m==='GET')return J(r,200,{pay:db.pay||{}});
- if(c==='hb')return J(r,200,{ok:1,maint:db.maint||'',pr:ptab(),payv:db.payv||0,bal:bal(u),tx:u.stx||[],live:lpub()||null,gift:u.gift||null,ban:isBanned(u)?(u.bu||1):0});
+ if(c==='hb')return J(r,200,{ok:1,maint:db.maint||'',pl:plInfo(u),adm:isRoot(u)?'root':u.adm||'',pr:ptab(),payv:db.payv||0,bal:bal(u),tx:u.stx||[],live:lpub()||null,gift:u.gift||null,ban:isBanned(u)?(u.bu||1):0});
  if(c==='gift'&&S[2]==='ack'&&m==='POST'){u.gift=null;sv();return J(r,200,{ok:1})}
  if(c==='me')return J(r,200,me(u));
  /* ===== LIVE ===== */
@@ -312,14 +316,14 @@ function h(q,r,b){
   if(S[2]==='topup'&&m==='POST'){if(process.env.AUTOTOPUP!=='1')return ER(r,403,'Top up otomatis belum diaktifkan di server. Hubungi admin untuk menambah saldo.');const a=Math.floor(+b.amount);if(!(a>0)||a>1e8)return ER(r,400,'Jumlah tidak valid');credit(u,a,'Top up '+String(b.ref||'').slice(0,20));sv();return J(r,200,{ok:1,bal:u.sal,tx:u.stx})}
   if(S[2]==='buyplan'&&m==='POST'){const id=String(b.plan),pl=PTAB[id];if(!pl)return ER(r,400,'Paket tidak valid');const price=peff(id);
    if(bal(u)<price)return ER(r,400,'Saldo tidak cukup');const ref='PL'+Date.now().toString(36).toUpperCase()+cr.randomBytes(2).toString('hex').toUpperCase();
-   u.sal=bal(u)-price;addTx(u,-price,'Beli '+pl.n,ref);sv();return J(r,200,{ok:1,ref,bal:u.sal,tx:u.stx,days:pl.d,price,name:pl.n})}
+   u.sal=bal(u)-price;addTx(u,-price,'Beli '+pl.n,ref);setPl(u,id,pl.d,true);sv();return J(r,200,{ok:1,ref,bal:u.sal,tx:u.stx,days:pl.d,price,name:pl.n,pl:plInfo(u)})}
   if(S[2]==='giftrole'&&m==='POST'){
    const n=Date.now();u.tr=(u.tr||[]).filter(t=>n-t<6e4);if(u.tr.length>=5)return ER(r,429,'Terlalu sering, tunggu sebentar');
    {const ve=vpw(u,b.vp);if(ve)return ER(r,403,ve)}
    const t=db.users[String(b.to)],pl0=PTAB[String(b.plan)];if(!t||t.id===u.id)return ER(r,404,'Penerima tidak ditemukan');if(!pl0)return ER(r,400,'Paket tidak valid');if(isAdm(t))return ER(r,400,'Akun Owner tidak bisa dihadiahi role');const pl={...pl0,p:peff(String(b.plan))};
    if(bal(u)<pl.p)return ER(r,400,'Saldo tidak cukup');
    const ref='RL'+n.toString(36).toUpperCase()+cr.randomBytes(2).toString('hex').toUpperCase();u.tr.push(n);
-   u.sal=bal(u)-pl.p;addTx(u,-pl.p,'Hadiah role '+pl.n+' untuk '+t.name+' (ID '+t.id+')',ref);t.gift={plan:String(b.plan),days:pl.d,from:u.name,t:n};sv();
+   u.sal=bal(u)-pl.p;addTx(u,-pl.p,'Hadiah role '+pl.n+' untuk '+t.name+' (ID '+t.id+')',ref);t.gift={plan:String(b.plan),days:pl.d,from:u.name,t:n};setPl(t,String(b.plan),pl.d,true);sv();
    return J(r,200,{ok:1,ref,t:n,bal:u.sal,tx:u.stx,plan:pl.n,days:pl.d,price:pl.p,to:{id:t.id,name:t.name,role:pub(t).role,av:pub(t).av}})}
   if(S[2]==='transfer'&&m==='POST'){
    const n=Date.now();u.tr=(u.tr||[]).filter(t=>n-t<6e4);if(u.tr.length>=5)return ER(r,429,'Terlalu sering transfer, tunggu sebentar');{const ve=vpw(u,b.vp);if(ve)return ER(r,403,ve)}
@@ -379,13 +383,13 @@ function h(q,r,b){
   if(a==='mute'){if(!t)return ER(r,404,'ID tidak ditemukan');if(isRoot(t))return ER(r,403,'Akun Owner tidak bisa di-mute');const dur=Math.max(0,Math.floor(+b.dur)||0);t.mute=dur?Date.now()+dur*6e4:0;sv();alog(u,dur?'mute':'buka mute',t.name+' (ID '+t.id+')'+(dur?' · '+dur+' menit':''));return J(r,200,{ok:1,mute:t.mute})}
   if(a==='saldo'){if(!t)return ER(r,404,'ID tidak ditemukan');const v=Math.trunc(+b.amount);if(!v||Math.abs(v)>1e9)return ER(r,400,'Nominal tidak valid');const d=v<0?-Math.min(-v,bal(t)):v;if(!d)return ER(r,400,'Saldo pengguna sudah 0');
    if(d>0)credit(t,d,String(b.note||'Penambahan saldo oleh Owner').slice(0,50));else{t.sal=bal(t)+d;addTx(t,d,String(b.note||'Pengurangan saldo oleh Owner').slice(0,50))}sv();alog(u,'saldo',t.name+' (ID '+t.id+') '+(d>0?'+':'')+d);return J(r,200,{ok:1,bal:t.sal})}
-  if(a==='plan'){if(!t)return ER(r,404,'ID tidak ditemukan');const p=String(b.plan||'');if(p!=='free'&&!RL.includes(p))return ER(r,400,'Paket tidak valid');const days=Math.max(0,Math.min(3650,Math.floor(+b.days)||0));t.gift={plan:p,days,from:'Owner',t:Date.now(),rev:p==='free'};sv();alog(u,p==='free'?'cabut premium':'beri premium',t.name+' (ID '+t.id+') '+p+(days?' '+days+' hari':' unlimited'));return J(r,200,{ok:1})}
+  if(a==='plan'){if(!t)return ER(r,404,'ID tidak ditemukan');const p=String(b.plan||'');if(p!=='free'&&!RL.includes(p))return ER(r,400,'Paket tidak valid');const days=Math.max(0,Math.min(3650,Math.floor(+b.days)||0));t.gift={plan:p,days,from:'Owner',t:Date.now(),rev:p==='free'};setPl(t,p,days,false);sv();alog(u,p==='free'?'cabut premium':'beri premium',t.name+' (ID '+t.id+') '+p+(days?' '+days+' hari':' unlimited'));return J(r,200,{ok:1})}
   if(a==='user/del'){if(!t)return ER(r,404,'ID tidak ditemukan');if(isRoot(t))return ER(r,403,'Akun Owner tidak bisa dihapus');alog(u,'hapus akun',t.name+' (ID '+t.id+')');delete db.users[t.id];delete db.mail[t.email];clients.forEach(c=>{if(c.u.id===t.id){try{c.sock.destroy()}catch{}}});sv();return J(r,200,{ok:1})}
   if(a==='users'){const qq=String(b.q||'').trim().toLowerCase(),off=Math.max(0,+b.off||0),lim=Math.min(40,+b.lim||25),n=Date.now();
    let L=Object.values(db.users);if(qq)L=L.filter(x=>x.id===qq||(x.name||'').toLowerCase().includes(qq)||(x.email||'').includes(qq));
    if(b.f==='ban')L=L.filter(x=>isBanned(x));else if(b.f==='on')L=L.filter(x=>isOn(x.id));else if(b.f==='adm')L=L.filter(x=>isAdm(x));
    if(b.sort==='sal')L.sort((x,y)=>bal(y)-bal(x));else L.sort((x,y)=>(isOn(y.id)-isOn(x.id))||((y.cr||0)-(x.cr||0)));
-   return J(r,200,{total:L.length,list:L.slice(off,off+lim).map(x=>({id:x.id,name:x.name,email:x.email,role:pub(x).role,adm:x.adm||'',plan:(x.data||{}).plan||'free',pexp:(x.data||{}).planExp||0,sal:bal(x),ban:isBanned(x),bu:x.bu||0,mute:x.mute>n?x.mute:0,on:isOn(x.id),seen:seen[x.id]||0,cr:x.cr||0,av:pub(x).av}))})}
+   return J(r,200,{total:L.length,list:L.slice(off,off+lim).map(x=>({id:x.id,name:x.name,email:x.email,role:pub(x).role,adm:x.adm||'',plan:planOf(x),pexp:pexpOf(x),sal:bal(x),ban:isBanned(x),bu:x.bu||0,mute:x.mute>n?x.mute:0,on:isOn(x.id),seen:seen[x.id]||0,cr:x.cr||0,av:pub(x).av}))})}
   if(a==='stats'){const us=Object.values(db.users),n=Date.now(),cs=Object.values(db.codes);
    return J(r,200,{users:us.length,online:us.filter(x=>isOn(x.id)).length,banned:us.filter(x=>isBanned(x)).length,muted:us.filter(x=>x.mute>n).length,admins:us.filter(x=>isAdm(x)).length,saldo:us.reduce((a,x)=>a+bal(x),0),com:db.com.length,codes:{free:cs.filter(c=>!c.used&&!(c.exp&&c.exp<n)).length,used:cs.filter(c=>c.used).length},live:lpub()||null,lastLive:db.lastLive||null,slow:db.slow||0,lock:!!db.lock,pin:db.pin||null,maint:db.maint||'',nomedia:!!db.nomedia,novoice:!!db.novoice,store:{...store,loaded},regClosed:!!db.regClosed,words:(db.words||[]).length,up:Math.round(process.uptime()),mem:Math.round(process.memoryUsage().rss/1e6),gifts:GIFTS.length})}
   if(a==='com'){let ch=[];
@@ -432,7 +436,7 @@ function h(q,r,b){
   sv();return J(r,200,me(u));
  }
  if(c==='password'&&m==='POST'){if(ph(String(b.old||''),u.salt)!==u.ph)return ER(r,403,'Password lama salah');const n=String(b.new||'');if(n.length<6)return ER(r,400,'Password baru minimal 6 karakter');u.salt=cr.randomBytes(16).toString('hex');u.ph=ph(n,u.salt);sv();return J(r,200,{ok:1})}
- if(c==='sync'&&m==='POST'){if(JSON.stringify(b.data||{}).length>6e5)return ER(r,413,'Data sinkron terlalu besar');bal(u);const d={...(b.data||{})};delete d.saldo;delete d.tx;u.data=d;sv();return J(r,200,{ok:1})}
+ if(c==='sync'&&m==='POST'){if(JSON.stringify(b.data||{}).length>6e5)return ER(r,413,'Data sinkron terlalu besar');bal(u);const d={...(b.data||{})};delete d.saldo;delete d.tx;if(!u.pl&&d.plan&&d.plan!=='free'&&RL.includes(d.plan))u.pl={id:d.plan,exp:+d.planExp||0};d.plan=planOf(u);d.planExp=pexpOf(u);u.data=d;sv();return J(r,200,{ok:1})}
  if(c==='logoutall'){u.ep++;sv();return J(r,200,{ok:1})}
  if(c==='delete'&&m==='POST'){delete db.users[u.id];delete db.mail[u.email];sv();return J(r,200,{ok:1})}
  if(c==='status'){

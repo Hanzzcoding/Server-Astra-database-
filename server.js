@@ -21,6 +21,27 @@ const path=require('path'),WPDIR=path.join(path.dirname(path.resolve(FILE)),'ast
 try{fs.mkdirSync(WPDIR,{recursive:true})}catch{}
 const wpPath=f=>path.join(WPDIR,String(f).replace(/[^\w]/g,'')),wpTmp=f=>path.join(WPDIR,'t-'+String(f).replace(/[^\w]/g,''));
 const wpUnl=p=>{try{fs.unlinkSync(p)}catch{}};
+/* unduh video/gambar dari link ke server (aman: hanya https, tolak alamat internal, maks 30 MB) */
+const https=require('https'),dnsP=require('dns').promises,net=require('net');
+const privIP=ip=>{if(net.isIPv6(ip)){const l=ip.toLowerCase();if(l==='::1'||l==='::'||/^f[cd]/.test(l)||/^fe[89ab]/.test(l))return true;const m=/^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(l);return m?privIP(m[1]):false}
+ const p=ip.split('.').map(Number);return p[0]===0||p[0]===10||p[0]===127||p[0]>=224||(p[0]===169&&p[1]===254)||(p[0]===172&&p[1]>=16&&p[1]<=31)||(p[0]===192&&p[1]===168)||(p[0]===100&&p[1]>=64&&p[1]<=127)};
+const wpSniff=b=>b.length<12?'':b.slice(4,8).toString()==='ftyp'?'video/mp4':(b[0]===0x1a&&b[1]===0x45&&b[2]===0xdf&&b[3]===0xa3)?'video/webm':(b[0]===0x89&&b.slice(1,4).toString()==='PNG')?'image/png':(b[0]===0xff&&b[1]===0xd8&&b[2]===0xff)?'image/jpeg':b.slice(0,4).toString()==='GIF8'?'image/gif':(b.slice(0,4).toString()==='RIFF'&&b.slice(8,12).toString()==='WEBP')?'image/webp':'';
+let wpBusy=0;
+async function wpDl(url,id){let u;try{u=new URL(url)}catch{throw new Error('Link tidak valid')}
+ for(let hop=0;hop<5;hop++){
+  if(u.protocol!=='https:')throw new Error('Link harus https://');if(u.username||u.password)throw new Error('Link tidak valid');
+  let ad;try{ad=await dnsP.lookup(u.hostname,{all:true})}catch{throw new Error('Alamat link tidak ditemukan')}
+  if(!ad.length||ad.some(x=>privIP(x.address)))throw new Error('Alamat link tidak diizinkan');
+  const res=await new Promise((ok,no)=>{const rq=https.get(u,{lookup:(h,o,cb)=>cb(null,ad[0].address,ad[0].family),timeout:20000,headers:{'user-agent':'Mozilla/5.0 (compatible; AstraBot)',accept:'video/*,image/*;q=0.9,*/*;q=0.5'}},ok);rq.on('timeout',()=>rq.destroy(new Error('Server link terlalu lama merespons')));rq.on('error',no)});
+  if(res.statusCode>=300&&res.statusCode<400&&res.headers.location){res.resume();try{u=new URL(res.headers.location,u)}catch{throw new Error('Pengalihan link tidak valid')}continue}
+  if(res.statusCode!==200){res.resume();throw new Error('Link tidak bisa diunduh (kode '+res.statusCode+')')}
+  const cl=+res.headers['content-length']||0;if(cl>WPMAX){res.resume();throw new Error('File di link lebih dari 30 MB')}
+  return await new Promise((ok,no)=>{const ws=fs.createWriteStream(wpTmp(id));let n=0,head=Buffer.alloc(0),dead=0;ws.on('error',e=>fail(e));const tm=setTimeout(()=>fail(new Error('Unduhan terlalu lama (maks 90 detik)')),9e4);
+   const fail=e=>{if(dead)return;dead=1;clearTimeout(tm);res.destroy();ws.destroy();wpUnl(wpTmp(id));no(e)};
+   res.on('data',d=>{if(dead)return;n+=d.length;if(head.length<16)head=Buffer.concat([head,d]).subarray(0,16);if(n>WPMAX)return fail(new Error('File di link lebih dari 30 MB'));if(!ws.write(d)){res.pause();ws.once('drain',()=>res.resume())}});
+   res.on('error',fail);res.on('aborted',()=>fail(new Error('Unduhan terputus')));
+   res.on('end',()=>{if(dead)return;ws.end(()=>{clearTimeout(tm);const mime=wpSniff(head);if(!n||!mime){wpUnl(wpTmp(id));return no(new Error('Link ini bukan video MP4/WebM/MOV atau gambar PNG/JPG/WebP/GIF'))}ok({n,mime,name:decodeURIComponent((u.pathname.split('/').pop()||'link').slice(0,60))})})})})}
+ throw new Error('Terlalu banyak pengalihan link')}
 const wpErr=(m,e)=>{store.err='wallpaper '+m+': '+e.message;store.errAt=Date.now();console.error('Upstash wallpaper gagal',m,e.message)};
 function shardsOf(d){const sh={},us={};
  for(const id in d.users){const l={...d.users[id]},hv=[];for(const f of HEAVY)if(l[f]){sh['astra-u:'+id+':'+f]=l[f];hv.push(f);delete l[f]}
@@ -175,7 +196,10 @@ const ptab=()=>{const r={};for(const id in PTAB){const o=(db.prices||{})[id];if(
 const alog=(u,a,d)=>{db.alog=db.alog||[];db.alog.unshift({t:Date.now(),by:u.name,a,d:String(d||'').slice(0,140)});if(db.alog.length>150)db.alog.length=150;sv()};
 /* verifikasi langkah ke-2: password akun dicek ulang di server */
 const vpw=(u,vp)=>{const n=Date.now();if(u.vl&&u.vl>n)return'Verifikasi dikunci. Coba lagi '+Math.ceil((u.vl-n)/6e4)+' menit lagi';if(typeof vp!=='string'||!vp||ph(vp,u.salt)!==u.ph){u.vf=(u.vf||0)+1;if(u.vf>=5){u.vf=0;u.vl=n+10*6e4;return'Password salah 5 kali. Verifikasi dikunci 10 menit'}return'Password salah ('+u.vf+'/5)'}u.vf=0;return null};
-const isBanned=u=>{if(!u.ban)return false;if(u.bu&&u.bu<Date.now()){u.ban=0;u.bu=0;u.st=0;sv();return false}return true};
+const isBanned=u=>{if(!u.ban)return false;if(u.bu&&u.bu<Date.now()){u.ban=0;u.ab=0;u.bw='';u.bu=0;u.st=0;sv();return false}return true};
+const isAB=u=>!!(u.ab&&isBanned(u)&&!isRoot(u));
+let ownC=null;const ownId=()=>{if(ownC&&db.users[ownC]&&isRoot(db.users[ownC]))return ownC;ownC=db.users['100001']&&isRoot(db.users['100001'])?'100001':(Object.keys(db.users).find(i=>isRoot(db.users[i]))||'100001');return ownC};
+const banInfo=u=>isAB(u)?{u:u.bu||0,w:u.bw||'',id:ownId(),n:u.name}:0;
 const hm=t=>new Date(t+7*36e5).toISOString().slice(11,16)+' WIB';
 function postCom(u,k,b,nm){
  const adm=isAdm(u),n=Date.now();
@@ -187,7 +211,7 @@ function postCom(u,k,b,nm){
  if(!adm&&db.novoice&&k==='aud')return'Pesan suara sedang dimatikan oleh Owner';
  if(db.slow&&!adm){const w=db.slow*1000-(n-(u.ls||0));if(w>0)return'Mode lambat aktif: tunggu '+Math.ceil(w/1000)+' detik lagi';u.ls=n}
  if(k==='aud'&&!adm){if(b.length>AUDM)return'Pesan suara member maksimal 30 detik';u.vo=(u.vo||[]).filter(x=>n-x<36e5);if(u.vo.length&&n-u.vo[u.vo.length-1]<20000)return'Tunggu 20 detik sebelum kirim pesan suara lagi';if(u.vo.length>=10)return'Batas pesan suara member 10 per jam. Coba lagi nanti';u.vo.push(n)}
- {const v=adm?null:k==='text'?mod(b):(nm&&BAD.test(nm)?['ban','Nama file berisi konten judi/ilegal']:null);if(v){if(v[0]==='ban')u.ban=1;else if((u.st=(u.st||0)+1)>=3)u.ban=1;
+ {const v=adm?null:k==='text'?mod(b):(nm&&BAD.test(nm)?['ban','Nama file berisi konten judi/ilegal']:null);if(v){if(v[0]==='ban'){u.ban=1;u.bw=v[1]}else if((u.st=(u.st||0)+1)>=3){u.ban=1;u.bw='Pelanggaran berulang di komunitas'}
   say(`🛡️ Pesan ${u.name} dihapus: ${v[1]}. ${u.ban?u.name+' telah di-BAN dari komunitas.':'Peringatan '+u.st+'/3.'}`);sv();return v[1]+(u.ban?' (kamu di-BAN)':'')}}
  push({i:Date.now()+Math.random(),t:Date.now(),u:u.id,k,b,n:nm});return''}
 
@@ -319,16 +343,23 @@ function h(q,r,b){
  if(c==='avatar'&&m==='GET'){const x=db.users[S[2]],mm=x&&x.avatar&&/^data:(image\/[\w.+-]+);base64,(.+)$/.exec(x.avatar);if(!mm)return ER(r,404,'Tidak ada foto');r.writeHead(200,{'content-type':mm[1],'cache-control':'public,max-age=86400','access-control-allow-origin':'*'});return r.end(Buffer.from(mm[2],'base64'))}
 
  if(c==='wallpaper'&&m==='GET')return J(r,200,{wp:wpPub(),v:db.wpv||0});
+
+ if(c==='wpprev'&&m==='GET'){const k=db.tok[P.get('t')||''],u=k&&db.users[k.id],id=String(S[2]||'').replace(/[^\w]/g,''),pd=wpPend[id];
+  if(!u||k.ep!==u.ep||!isRoot(u)||!pd||!pd.done)return ER(r,404,'Tidak ada file');let st;try{st=fs.statSync(wpTmp(id))}catch{return ER(r,404,'File belum siap')}
+  const tot=st.size,H={'content-type':pd.mime,'accept-ranges':'bytes','cache-control':'no-store','access-control-allow-origin':'*'},rg=/^bytes=(\d*)-(\d*)$/.exec(q.headers.range||'');let a=0,e=tot-1,code=200;
+  if(rg&&(rg[1]||rg[2])){a=rg[1]?+rg[1]:Math.max(0,tot-+rg[2]);e=rg[1]&&rg[2]?Math.min(+rg[2],tot-1):tot-1;if(a>e||a>=tot){r.writeHead(416,{'content-range':'bytes */'+tot});return r.end()}code=206;H['content-range']=`bytes ${a}-${e}/${tot}`}
+  H['content-length']=e-a+1;r.writeHead(code,H);const rs=fs.createReadStream(wpTmp(id),{start:a,end:e});rs.on('error',()=>r.destroy());r.on('close',()=>rs.destroy());rs.pipe(r);return}
  if(c==='wpfile'&&m==='GET'){const fid=String(S[2]||'').replace(/[^\w]/g,''),mt=db.wpf&&db.wpf[fid];if(!mt)return ER(r,404,'Tidak ada file');let st;try{st=fs.statSync(wpPath(fid))}catch{return ER(r,404,'File belum siap')}
   const tot=st.size,H={'content-type':mt.m,'accept-ranges':'bytes','cache-control':'public,max-age=31536000,immutable','access-control-allow-origin':'*'},rg=/^bytes=(\d*)-(\d*)$/.exec(q.headers.range||'');let a=0,e=tot-1,code=200;
   if(rg&&(rg[1]||rg[2])){a=rg[1]?+rg[1]:Math.max(0,tot-+rg[2]);e=rg[1]&&rg[2]?Math.min(+rg[2],tot-1):tot-1;if(a>e||a>=tot){r.writeHead(416,{'content-range':'bytes */'+tot});return r.end()}code=206;H['content-range']=`bytes ${a}-${e}/${tot}`}
   H['content-length']=e-a+1;r.writeHead(code,H);const rs=fs.createReadStream(wpPath(fid),{start:a,end:e});rs.on('error',()=>r.destroy());r.on('close',()=>rs.destroy());rs.pipe(r);return}
  const k=db.tok[(q.headers.authorization||'').slice(7)],u=k&&db.users[k.id];
  if(!u||k.ep!==u.ep)return ER(r,401,'Sesi habis, silakan masuk lagi');
+ if(isAB(u)&&!(c==='hb'||c==='me'||c==='ping'||c==='logoutall'||(c==='dm'&&S[2]===ownId()&&S.length<=3)))return J(r,403,{e:'Akunmu di-BAN',ab:banInfo(u)});
   seen[u.id]=Date.now();
  if(db.maint&&!isAdm(u)&&c!=='hb')return ER(r,503,'Server sedang pemeliharaan: '+db.maint);
  if(c==='pay'&&m==='GET')return J(r,200,{pay:db.pay||{}});
- if(c==='hb')return J(r,200,{ok:1,maint:db.maint||'',pl:plInfo(u),adm:isRoot(u)?'root':u.adm||'',pr:ptab(),payv:db.payv||0,wpv:db.wpv||0,bal:bal(u),tx:u.stx||[],live:lpub()||null,gift:u.gift||null,ban:isBanned(u)?(u.bu||1):0});
+ if(c==='hb')return J(r,200,{ok:1,maint:db.maint||'',pl:plInfo(u),adm:isRoot(u)?'root':u.adm||'',pr:ptab(),payv:db.payv||0,wpv:db.wpv||0,bal:bal(u),tx:u.stx||[],live:lpub()||null,gift:u.gift||null,ban:isBanned(u)?(u.bu||1):0,ab:banInfo(u)});
  if(c==='gift'&&S[2]==='ack'&&m==='POST'){u.gift=null;sv();return J(r,200,{ok:1})}
  if(c==='me')return J(r,200,me(u));
  /* ===== LIVE ===== */
@@ -432,7 +463,7 @@ function h(q,r,b){
   const t=db.users[String(b.id)];
   if(a==='ban'){if(!t)return ER(r,404,'ID tidak ditemukan');if(isRoot(t))return ER(r,403,'Akun Owner tidak bisa di-ban');
    const dur=Math.max(0,Math.floor(+b.dur)||0),why=String(b.reason||'').trim().slice(0,60);
-   t.ban=b.on?1:0;t.bu=b.on&&dur?Date.now()+dur*6e4:0;if(!b.on)t.st=0;sv();
+   t.ban=b.on?1:0;t.ab=b.on?1:0;t.bw=b.on?why:'';t.bu=b.on&&dur?Date.now()+dur*6e4:0;if(!b.on)t.st=0;sv();castU([t.id],{t:'ban',ab:banInfo(t)});
    alog(u,b.on?'ban':'buka ban',t.name+' (ID '+t.id+')'+(b.on?(dur?' · '+dur+' menit':' · permanen')+(why?' · '+why:''):''));
    say(b.on?'🛡️ '+t.name+' di-BAN dari komunitas oleh Owner'+(dur?' selama '+(dur>=1440?Math.round(dur/1440)+' hari':dur>=60?Math.round(dur/60)+' jam':dur+' menit'):' (permanen)')+(why?'. Alasan: '+why:'.'):'✅ Ban '+t.name+' dibuka oleh Owner.');
    return J(r,200,{ok:1,ban:!!t.ban})}
@@ -445,7 +476,7 @@ function h(q,r,b){
    let L=Object.values(db.users);if(qq)L=L.filter(x=>x.id===qq||(x.name||'').toLowerCase().includes(qq)||(x.email||'').includes(qq));
    if(b.f==='ban')L=L.filter(x=>isBanned(x));else if(b.f==='on')L=L.filter(x=>isOn(x.id));else if(b.f==='adm')L=L.filter(x=>isAdm(x));
    if(b.sort==='sal')L.sort((x,y)=>bal(y)-bal(x));else L.sort((x,y)=>(isOn(y.id)-isOn(x.id))||((y.cr||0)-(x.cr||0)));
-   return J(r,200,{total:L.length,list:L.slice(off,off+lim).map(x=>({id:x.id,name:x.name,email:x.email,role:pub(x).role,adm:x.adm||'',plan:planOf(x),pexp:pexpOf(x),sal:bal(x),ban:isBanned(x),bu:x.bu||0,mute:x.mute>n?x.mute:0,on:isOn(x.id),seen:seen[x.id]||0,cr:x.cr||0,av:pub(x).av}))})}
+   return J(r,200,{total:L.length,list:L.slice(off,off+lim).map(x=>({id:x.id,name:x.name,email:x.email,role:pub(x).role,adm:x.adm||'',plan:planOf(x),pexp:pexpOf(x),sal:bal(x),ban:isBanned(x),ab:x.ab?1:0,bw:x.bw||'',bu:x.bu||0,mute:x.mute>n?x.mute:0,on:isOn(x.id),seen:seen[x.id]||0,cr:x.cr||0,av:pub(x).av}))})}
   if(a==='stats'){const us=Object.values(db.users),n=Date.now(),cs=Object.values(db.codes);
    return J(r,200,{users:us.length,online:us.filter(x=>isOn(x.id)).length,banned:us.filter(x=>isBanned(x)).length,muted:us.filter(x=>x.mute>n).length,admins:us.filter(x=>isAdm(x)).length,saldo:us.reduce((a,x)=>a+bal(x),0),com:db.com.length,codes:{free:cs.filter(c=>!c.used&&!(c.exp&&c.exp<n)).length,used:cs.filter(c=>c.used).length},live:lpub()||null,lastLive:db.lastLive||null,slow:db.slow||0,lock:!!db.lock,pin:db.pin||null,maint:db.maint||'',nomedia:!!db.nomedia,novoice:!!db.novoice,store:{...store,loaded},regClosed:!!db.regClosed,words:(db.words||[]).length,up:Math.round(process.uptime()),mem:Math.round(process.memoryUsage().rss/1e6),gifts:GIFTS.length})}
   if(a==='com'){let ch=[];
@@ -463,6 +494,10 @@ function h(q,r,b){
     let qr=b.qr===undefined?(db.pay[id]||{}).qr||'':String(b.qr||'');if(qr&&(!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+\/=]+$/.test(qr)||qr.length>4e5))return ER(r,400,'Gambar QR harus PNG/JPG/WebP dan maks ±290 KB');
     if(!link&&!qr)delete db.pay[id];else db.pay[id]={link,qr,note:String(b.note||'').slice(0,80)}}
    db.payv=Date.now();sv();alog(u,'pembayaran',id+(b.off?' dihapus':' diperbarui'));return J(r,200,{ok:1,pay:db.pay})}
+  if(a==='wpfetch'){if(!isRoot(u))return ER(r,403,'Hanya Owner utama');if(wpBusy)return ER(r,429,'Masih mengunduh video lain, tunggu sebentar');
+   const id=cr.randomBytes(8).toString('hex'),now=Date.now();for(const f in wpPend)if(now-wpPend[f].t>18e5){wpUnl(wpTmp(f));delete wpPend[f]}
+   const ks=Object.keys(wpPend);while(ks.length>=2){const f=ks.shift();wpUnl(wpTmp(f));delete wpPend[f]}
+   wpBusy=1;wpDl(String(b.url||'').trim(),id).then(o=>{wpPend[id]={t:Date.now(),n:o.n,total:o.n,mime:o.mime,done:1};J(r,200,{ok:1,fid:id,size:o.n,mime:o.mime,name:o.name})}).catch(e=>ER(r,400,e.message||'Gagal mengunduh link')).finally(()=>{wpBusy=0});return}
   if(a==='wallpaper'){if(!isRoot(u))return ER(r,403,'Hanya Owner utama');
    if(b.act==='get')return J(r,200,{wp:wpPub(),v:db.wpv||0,files:Object.fromEntries(Object.entries(db.wpf||{}).map(([k,v])=>[k,v.n]))});
    if(b.act==='reset'){for(const f in (db.wpf||{}))wpUnl(wpPath(f));db.wp=null;db.wpf={};db.wpv=Date.now();sv();alog(u,'wallpaper','kembali ke bawaan');return J(r,200,{ok:1,wp:null,v:db.wpv})}
@@ -535,7 +570,10 @@ function h(q,r,b){
   if(c==='com')cast({t:'del',i:id});else castU([u.id,o],{t:'del',p:key,i:id});
   return J(r,200,{ok:1})}
  if(c==='com'||c==='dm'){
-  let L;if(c==='com')L=db.com;else{const o=S[2];if(!db.users[o])return ER(r,404,'ID tidak ditemukan');if(!u.fr.includes(o))return ER(r,403,'Tambahkan dulu sebagai teman untuk chat pribadi');L=db.dm[[u.id,o].sort().join('-')]||=[]}
+  let L;if(c==='com')L=db.com;else{const o=S[2];if(!db.users[o])return ER(r,404,'ID tidak ditemukan');const tg=db.users[o],ap=isAB(u)&&isRoot(tg),rp2=isRoot(u)&&isAB(tg);
+   if(ap&&m==='POST'){const n=Date.now();if(b.k!=='text'||String(b.b||'').length>500)return ER(r,400,'Selama di-ban hanya bisa kirim teks (maks 500 huruf)');u.bm=(u.bm||[]).filter(x=>n-x<36e5);if(u.bm.length>=20)return ER(r,429,'Terlalu banyak pesan, coba lagi nanti');if(u.bm.length&&n-u.bm[u.bm.length-1]<2000)return ER(r,429,'Pelan-pelan, tunggu 2 detik');u.bm.push(n)}
+   if((ap||rp2)&&!u.fr.includes(o)){u.fr.push(o);tg.fr.includes(u.id)||tg.fr.push(u.id);sv()}
+   if(!u.fr.includes(o))return ER(r,403,'Tambahkan dulu sebagai teman untuk chat pribadi');L=db.dm[[u.id,o].sort().join('-')]||=[]}
   if(m==='POST'){
    if(!valid(b.k,b.b,b.n))return ER(r,400,why(b.k,b.b,b.n));
    if(c==='com'){const e=postCom(u,b.k,b.b,b.n);if(e)return ER(r,403,e)}else{if(b.k==='aud'&&!isAdm(u)&&b.b.length>AUDM)return ER(r,413,'Pesan suara member maksimal 30 detik');const mm={i:Date.now()+Math.random(),t:Date.now(),u:u.id,k:b.k,b:b.b,n:b.n};L.push(mm);capMedia(L);castU([u.id,S[2]],{t:'dm',from:u.id,to:S[2],m:mm,u:{[u.id]:pub(u)}});if(L.length>300)L.splice(0,L.length-300);sv()}

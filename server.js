@@ -48,7 +48,7 @@ function shardsOf(d){const sh={},us={};
   if(l.data&&Object.keys(l.data).length){sh['astra-u:'+id+':data']=JSON.stringify(l.data);hv.push('data')}delete l.data;
   if(l.stx&&l.stx.length){sh['astra-u:'+id+':stx']=JSON.stringify(l.stx);hv.push('stx')}delete l.stx;l._h=hv;us[id]=l}
  sh['astra-com']=JSON.stringify(d.com,rep);const dmk=Object.keys(d.dm).filter(k=>(d.dm[k]||[]).length);for(const k of dmk)sh['astra-dm:'+k]=JSON.stringify(d.dm[k],rep);
- {const{pay,wp,wpf,...rest}=d;sh['astra-db']=JSON.stringify({...rest,users:us,com:[],dm:{},dmk},rep);const wm={};for(const f in wpSent)if(wpf&&wpf[f])wm[f]=wpSent[f];sh['astra-cfg']=JSON.stringify({prices:d.prices||{},pay:pay||{},pv:d.payv||0,wp:wp||null,wpm:wm})}return sh}
+ {const{pay,wp,wpf,spin,spd,...rest}=d;sh['astra-db']=JSON.stringify({...rest,users:us,com:[],dm:{},dmk},rep);const wm={};for(const f in wpSent)if(wpf&&wpf[f])wm[f]=wpSent[f];sh['astra-cfg']=JSON.stringify({prices:d.prices||{},pay:pay||{},pv:d.payv||0,wp:wp||null,wpm:wm,sp:spin||null,spd:spd||null})}return sh}
 const sent={};let needMig=0,busy=0;const store={up:!!process.env.UPSTASH_REDIS_REST_URL,ok:0,err:'',errAt:0,cmds:0,dbKB:0,bootOk:0};
 function writeLocal(){const t=JSON.stringify(db,rep);fs.writeFile(FILE+'.tmp',t,e=>!e&&fs.rename(FILE+'.tmp',FILE,()=>{}))}
 async function wpPush(){let ok=true;
@@ -73,6 +73,7 @@ async function wpFetch(f,m){const p=wpPath(f);try{if(fs.statSync(p).size===m.n)r
  if(fs.statSync(p).size!==m.n)throw new Error('wallpaper ukuran tidak cocok')}
 async function loadCfg(){let c=null;try{const rc=await rcmd(['GET','astra-cfg']);if(rc.error)throw new Error(rc.error);if(rc.result){sent['astra-cfg']=rc.result;c=JSON.parse(rc.result)}}catch(e){console.error('loadCfg:',e.message);return}
  if(!c)return;db.pay=c.pay||{};if(c.pv)db.payv=c.pv;if(c.prices&&Object.keys(c.prices).length&&!Object.keys(db.prices||{}).length)db.prices=c.prices;
+ if(c.sp)db.spin=c.sp;if(c.spd)db.spd=c.spd;
  if(c.wp){db.wp=c.wp;db.wpf={};
   for(const f in (c.wpm||{})){const m=c.wpm[f];await wpFetch(f,m);db.wpf[f]={n:m.n,m:m.m};wpSent[f]=m}
   for(const f in (c.wpc||{})){if(db.wpf[f])continue;const ks=[];for(let i=0;i<c.wpc[f];i++)ks.push(['GET','astra-wpf:'+f+':'+i]);const rr=await rpipe(ks);if(!Array.isArray(rr)||rr.some(x=>!x||x.error||x.result==null))throw new Error('wallpaper potongan lama gagal dimuat');const mm=/^data:([^;]+);base64,([\s\S]*)$/.exec(rr.map(x=>x.result).join(''));if(!mm)continue;const bf=Buffer.from(mm[2],'base64');fs.writeFileSync(wpPath(f),bf);db.wpf[f]={n:bf.length,m:mm[1]};wpLeg.push([f,c.wpc[f]])}}}
@@ -193,6 +194,26 @@ const GMAP=Object.fromEntries(GIFTS.map(g=>[g.id,g]));
 const PTAB={go25:{p:25000,d:30,n:'GO ASTRA Mini'},go50:{p:50000,d:30,n:'GO ASTRA Lite'},go75:{p:75000,d:30,n:'GO ASTRA Plus'},go150:{p:150000,d:30,n:'GO ASTRA Elite'},go250:{p:250000,d:30,n:'GO ASTRA Pro'},q3:{p:180000,d:90,n:'GO ASTRA Kuartal'},y1:{p:1000000,d:365,n:'GO ASTRA Tahunan'},y2:{p:2000000,d:730,n:'GO ASTRA 2 Tahun'},y5:{p:5000000,d:1825,n:'GO ASTRA Sultan'}};
 const peff=id=>{const o=(db.prices||{})[id],b=PTAB[id];return o&&o.p>=0&&(!o.until||o.until>Date.now())?o.p:b.p};
 const ptab=()=>{const r={};for(const id in PTAB){const o=(db.prices||{})[id];if(o&&o.p>=0&&(!o.until||o.until>Date.now()))r[id]={p:o.p,was:PTAB[id].p,note:o.note||'',until:o.until||0}}return r};
+/* ===== EVENT SPIN: 1x/hari, undian di server, diatur Owner utama ===== */
+const SPD=()=>({on:1,ttl:24,capBal:100000,pr:[
+ {id:'d5',t:'disc',v:5,w:22,mx:0},{id:'d10',t:'disc',v:10,w:14,mx:0},{id:'d25',t:'disc',v:25,w:6,mx:50},{id:'d50',t:'disc',v:50,w:1,mx:3},
+ {id:'b500',t:'bal',v:500,w:18,mx:0},{id:'b1k',t:'bal',v:1000,w:10,mx:0},{id:'b5k',t:'bal',v:5000,w:2,mx:5},
+ {id:'p1',t:'plan',v:1,w:3,mx:5},{id:'z',t:'none',v:0,w:24,mx:0}]});
+const wibDay=n=>new Date((n||Date.now())+7*36e5).toISOString().slice(0,10);
+const toMid=()=>{const n=Date.now(),d=new Date(n+7*36e5);return Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()+1)-7*36e5-n};
+const spCfg=()=>db.spin||(db.spin=SPD());
+const spStat=()=>{const d=wibDay();if(!db.spd||db.spd.d!==d)db.spd={d,n:0,bal:0,c:{},log:(db.spd&&db.spd.log)||[]};return db.spd};
+const spLabel=p=>p.l||(p.t==='disc'?'Diskon '+p.v+'%':p.t==='bal'?'Saldo Rp'+Number(p.v).toLocaleString('id-ID'):p.t==='plan'?'Premium '+p.v+' hari':'Belum beruntung');
+const spView=(adm)=>{const c=spCfg();return{on:!!c.on,ttl:c.ttl,capBal:c.capBal,pr:c.pr.map(p=>({id:p.id,t:p.t,v:p.v,l:spLabel(p),...(adm?{w:p.w,mx:p.mx,cl:p.l||''}:{})}))}};
+const dcOf=u=>u.dc&&u.dc.exp>Date.now()?u.dc:null;
+const spState=u=>{const c=spCfg();return{on:!!c.on,can:!!c.on&&u.sp!==wibDay(),dc:dcOf(u),next:toMid()}};
+const spSan=b=>{const c=SPD(),o={on:b.on?1:0,ttl:Math.min(168,Math.max(1,Math.floor(+b.ttl)||24)),capBal:Math.min(1e8,Math.max(0,Math.floor(+b.capBal)||0)),pr:[]};
+ if(!Array.isArray(b.pr)||b.pr.length<2||b.pr.length>12)return null;const ids=new Set();
+ for(const x of b.pr){const t=['disc','bal','plan','none'].includes(x.t)?x.t:null;if(!t)return null;let v=Math.floor(+x.v)||0;if(t==='disc')v=Math.min(90,Math.max(1,v));else if(t==='bal')v=Math.min(1e6,Math.max(1,v));else if(t==='plan')v=Math.min(30,Math.max(1,v));else v=0;
+  let id=String(x.id||'').replace(/[^\w]/g,'').slice(0,10)||('p'+Math.random().toString(36).slice(2,7));while(ids.has(id))id+='x';ids.add(id);
+  o.pr.push({id,t,v,w:Math.min(1000,Math.max(0,+x.w||0)),mx:Math.min(100000,Math.max(0,Math.floor(+x.mx)||0)),l:String(x.l||'').trim().slice(0,24)})}
+ if(!o.pr.some(p=>p.w>0))return null;return o};
+const rp0=n=>'Rp'+Number(n).toLocaleString('id-ID');
 const alog=(u,a,d)=>{db.alog=db.alog||[];db.alog.unshift({t:Date.now(),by:u.name,a,d:String(d||'').slice(0,140)});if(db.alog.length>150)db.alog.length=150;sv()};
 /* verifikasi langkah ke-2: password akun dicek ulang di server */
 const vpw=(u,vp)=>{const n=Date.now();if(u.vl&&u.vl>n)return'Verifikasi dikunci. Coba lagi '+Math.ceil((u.vl-n)/6e4)+' menit lagi';if(typeof vp!=='string'||!vp||ph(vp,u.salt)!==u.ph){u.vf=(u.vf||0)+1;if(u.vf>=5){u.vf=0;u.vl=n+10*6e4;return'Password salah 5 kali. Verifikasi dikunci 10 menit'}return'Password salah ('+u.vf+'/5)'}u.vf=0;return null};
@@ -359,7 +380,21 @@ function h(q,r,b){
   seen[u.id]=Date.now();
  if(db.maint&&!isAdm(u)&&c!=='hb')return ER(r,503,'Server sedang pemeliharaan: '+db.maint);
  if(c==='pay'&&m==='GET')return J(r,200,{pay:db.pay||{}});
- if(c==='hb')return J(r,200,{ok:1,maint:db.maint||'',pl:plInfo(u),adm:isRoot(u)?'root':u.adm||'',pr:ptab(),payv:db.payv||0,wpv:db.wpv||0,bal:bal(u),tx:u.stx||[],live:lpub()||null,gift:u.gift||null,ban:isBanned(u)?(u.bu||1):0,ab:banInfo(u)});
+ if(c==='spin'&&m==='GET')return J(r,200,{...spView(false),...spState(u),hist:spStat().log.slice(0,8)});
+ if(c==='spin'&&S[2]==='go'&&m==='POST'){const cf=spCfg();if(!cf.on)return ER(r,403,'Event Spin sedang tidak aktif');const today=wibDay();
+  if(u.sp===today)return ER(r,429,'Jatah spin hari ini sudah dipakai. Reset tengah malam WIB');
+  const st=spStat();u.sp=today;
+  let el=cf.pr.map((p,i)=>({p,i})).filter(({p})=>p.w>0&&!(p.mx&&(st.c[p.id]||0)>=p.mx)&&!(p.t==='bal'&&cf.capBal&&st.bal+p.v>cf.capBal));
+  if(!el.length)el=cf.pr.map((p,i)=>({p,i})).filter(({p})=>p.t==='none');if(!el.length)el=[{p:{id:'z',t:'none',v:0},i:Math.max(0,cf.pr.findIndex(p=>p.t==='none'))}];
+  const tot=el.reduce((a,x)=>a+(x.p.w||1),0);let pk=cr.randomInt(1e9)/1e9*tot,ch=el[el.length-1];for(const x of el){pk-=(x.p.w||1);if(pk<0){ch=x;break}}
+  const p=ch.p,lab=spLabel(p);let msg='';
+  if(p.t==='bal'){credit(u,p.v,'Hadiah Spin: '+lab,'SP'+Date.now().toString(36).toUpperCase());st.bal+=p.v;msg='Saldo '+rp0(p.v)+' masuk ke saldomu'}
+  else if(p.t==='plan'){if(isRoot(u))msg='Premium tidak berlaku untuk Owner (sudah unlimited)';else{const cur=planOf(u);if(cur==='free'||!PTAB[cur]){setPl(u,'go25',p.v,false);msg=PTAB.go25.n+' gratis '+p.v+' hari'}else{const ex=pexpOf(u);if(ex){setPl(u,cur,0,false);u.pl.exp=ex+p.v*864e5}msg='Masa aktif '+PTAB[cur].n+' +'+p.v+' hari'}}}
+  else if(p.t==='disc'){const ex=dcOf(u);u.dc={pct:Math.max(p.v,ex?ex.pct:0),exp:Math.max(Date.now()+cf.ttl*36e5,ex?ex.exp:0)};msg='Diskon '+u.dc.pct+' persen untuk pembelian role, berlaku '+cf.ttl+' jam'}
+  else msg='Belum beruntung hari ini. Coba lagi besok!';
+  u.sl={t:Date.now(),l:lab};st.n++;st.c[p.id]=(st.c[p.id]||0)+1;if(p.t!=='none')st.log.unshift({t:Date.now(),u:u.name,id:u.id,l:lab});if(st.log.length>40)st.log.length=40;
+  sv();fast();return J(r,200,{ok:1,idx:ch.i,prize:{id:p.id,t:p.t,v:p.v,l:lab},msg,dc:dcOf(u),bal:bal(u),tx:u.stx||[],pl:plInfo(u),next:toMid()})}
+ if(c==='hb')return J(r,200,{ok:1,maint:db.maint||'',pl:plInfo(u),adm:isRoot(u)?'root':u.adm||'',pr:ptab(),payv:db.payv||0,wpv:db.wpv||0,sp:spState(u),bal:bal(u),tx:u.stx||[],live:lpub()||null,gift:u.gift||null,ban:isBanned(u)?(u.bu||1):0,ab:banInfo(u)});
  if(c==='gift'&&S[2]==='ack'&&m==='POST'){u.gift=null;sv();return J(r,200,{ok:1})}
  if(c==='me')return J(r,200,me(u));
  /* ===== LIVE ===== */
@@ -401,9 +436,9 @@ function h(q,r,b){
  if(c==='wallet'){
   if(S[2]==='spend'&&m==='POST'){const a=Math.floor(+b.amount);if(!(a>0)||a>1e9)return ER(r,400,'Jumlah tidak valid');if(bal(u)<a)return ER(r,400,'Saldo tidak cukup');u.sal=bal(u)-a;addTx(u,-a,String(b.note||'Pembayaran').slice(0,60));sv();return J(r,200,{ok:1,bal:u.sal,tx:u.stx})}
   if(S[2]==='topup'&&m==='POST'){if(process.env.AUTOTOPUP!=='1')return ER(r,403,'Top up otomatis belum diaktifkan di server. Hubungi admin untuk menambah saldo.');const a=Math.floor(+b.amount);if(!(a>0)||a>1e8)return ER(r,400,'Jumlah tidak valid');credit(u,a,'Top up '+String(b.ref||'').slice(0,20));sv();return J(r,200,{ok:1,bal:u.sal,tx:u.stx})}
-  if(S[2]==='buyplan'&&m==='POST'){const id=String(b.plan),pl=PTAB[id];if(!pl)return ER(r,400,'Paket tidak valid');const price=peff(id);
+  if(S[2]==='buyplan'&&m==='POST'){const id=String(b.plan),pl=PTAB[id];if(!pl)return ER(r,400,'Paket tidak valid');const pe=peff(id),dc=dcOf(u),dp=dc?Math.max(0,Math.floor(pl.p*(1-dc.pct/100))):Infinity,price=Math.min(pe,dp),usedDc=!!dc&&dp<pe;
    if(bal(u)<price)return ER(r,400,'Saldo tidak cukup');const ref='PL'+Date.now().toString(36).toUpperCase()+cr.randomBytes(2).toString('hex').toUpperCase();
-   u.sal=bal(u)-price;addTx(u,-price,'Beli '+pl.n,ref);setPl(u,id,pl.d,true);sv();return J(r,200,{ok:1,ref,bal:u.sal,tx:u.stx,days:pl.d,price,name:pl.n,pl:plInfo(u)})}
+   u.sal=bal(u)-price;addTx(u,-price,'Beli '+pl.n,ref);setPl(u,id,pl.d,true);if(usedDc)u.dc=null;sv();return J(r,200,{ok:1,ref,bal:u.sal,tx:u.stx,days:pl.d,price,name:pl.n,pl:plInfo(u),dc:dcOf(u),usedDc})}
   if(S[2]==='giftrole'&&m==='POST'){
    const n=Date.now();u.tr=(u.tr||[]).filter(t=>n-t<6e4);if(u.tr.length>=5)return ER(r,429,'Terlalu sering, tunggu sebentar');
    {const ve=vpw(u,b.vp);if(ve)return ER(r,403,ve)}
@@ -498,6 +533,11 @@ function h(q,r,b){
    const id=cr.randomBytes(8).toString('hex'),now=Date.now();for(const f in wpPend)if(now-wpPend[f].t>18e5){wpUnl(wpTmp(f));delete wpPend[f]}
    const ks=Object.keys(wpPend);while(ks.length>=2){const f=ks.shift();wpUnl(wpTmp(f));delete wpPend[f]}
    wpBusy=1;wpDl(String(b.url||'').trim(),id).then(o=>{wpPend[id]={t:Date.now(),n:o.n,total:o.n,mime:o.mime,done:1};J(r,200,{ok:1,fid:id,size:o.n,mime:o.mime,name:o.name})}).catch(e=>ER(r,400,e.message||'Gagal mengunduh link')).finally(()=>{wpBusy=0});return}
+  if(a==='spin'){if(!isRoot(u))return ER(r,403,'Hanya Owner utama');
+   if(b.act==='set'){const o=spSan(b);if(!o)return ER(r,400,'Pengaturan tidak valid: butuh 2-12 hadiah dan minimal satu hadiah dengan peluang di atas 0');db.spin=o;sv();fast();alog(u,'spin',(o.on?'aktif':'mati')+' · '+o.pr.length+' hadiah');}
+   if(b.act==='reset'){db.spin=SPD();sv();fast();alog(u,'spin','pengaturan dikembalikan ke bawaan')}
+   if(b.act==='clear'){db.spd=null;sv()}
+   const st=spStat();return J(r,200,{cfg:spView(true),stat:{d:st.d,n:st.n,bal:st.bal,c:st.c,log:st.log.slice(0,20)},users:Object.values(db.users).filter(x=>x.sp===st.d).length})}
   if(a==='wallpaper'){if(!isRoot(u))return ER(r,403,'Hanya Owner utama');
    if(b.act==='get')return J(r,200,{wp:wpPub(),v:db.wpv||0,files:Object.fromEntries(Object.entries(db.wpf||{}).map(([k,v])=>[k,v.n]))});
    if(b.act==='reset'){for(const f in (db.wpf||{}))wpUnl(wpPath(f));db.wp=null;db.wpf={};db.wpv=Date.now();sv();alog(u,'wallpaper','kembali ke bawaan');return J(r,200,{ok:1,wp:null,v:db.wpv})}

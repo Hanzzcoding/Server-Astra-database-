@@ -15,7 +15,7 @@ const rpipe=a=>fetch(RU+'/pipeline',{method:'POST',headers:{authorization:'Beare
 const rep=function(k,v){return k==='b'&&MK.includes(this.k)?undefined:v};
 /* Data dipecah jadi beberapa kunci kecil (foto profil, background, data sinkron tiap pengguna, chat komunitas, tiap chat pribadi)
    supaya tidak melewati batas ukuran satu permintaan Upstash dan tidak ada data yang hilang saat server restart. */
-const HEAVY=['avatar','bg','wall'];
+const HEAVY=['avatar','bg','wall','cls'];
 /* ===== file video wallpaper: disimpan di disk (hemat RAM), cadangan di Upstash per potongan ===== */
 const path=require('path'),WPDIR=path.join(path.dirname(path.resolve(FILE)),'astra-wp'),WPRAW=450000,wpSent={},wpLeg=[];
 try{fs.mkdirSync(WPDIR,{recursive:true})}catch{}
@@ -131,8 +131,10 @@ function wpSlot(o,old){o=o||{};const d=WPD(),n=(v,a,b,df)=>{v=+v;return isFinite
 function wpPub(){const w=db.wp;if(!w)return null;const f=s=>s&&(s.k==='file'&&!(db.wpf&&db.wpf[s.fid])?null:s);return{mode:w.mode==='split'?'split':'same',a:f(w.a)||null,b:f(w.b)||null}}
 
 /* ===== BROHAVEN: kota roleplay 3D multiplayer (aset & peta orisinal) ===== */
+const GTOP=[[500,1000],[3000,5000],[7000,10000],[20000,25000],[50000,50000]];
 const GMC=()=>db.gmc||(db.gmc={on:1,mul:1});
-const GVEH={sepeda:{n:'Sepeda',p:0,s:9},skuter:{n:'Skuter',p:300,s:15},motor:{n:'Motor',p:900,s:22},mobil:{n:'Mobil',p:1800,s:27},sport:{n:'Mobil Sport',p:5000,s:38}};
+const gTop=cf=>Array.isArray(cf.top)&&cf.top.length?cf.top:GTOP;
+const GVEH={sepeda:{n:'Sepeda Gunung',p:0,s:9},skuter:{n:'Skuter Matic',p:300,s:15},motor:{n:'Motor Sport',p:900,s:22},mobil:{n:'Mobil Sedan',p:1800,s:27},suv:{n:'SUV 4x4',p:3200,s:30},sport:{n:'Mobil Sport',p:6000,s:38},lambo:{n:'Lamborghini',p:30000,s:48}};
 const GPR={hs:[0,0,100,100,200,150,180,250],tp:[0,150,250,400,200,300],bt:[0,60,100,150],ac:[0,80,120,200,150,1000,90,160,260,300]},GMX={sk:6,hs:8,hc:8,tp:6,tc:10,bt:4,bc:10,ac:10};
 const gDef=()=>({sk:1,hs:1,hc:0,tp:0,tc:0,bt:0,bc:0,ac:0});
 const gmOf=u=>u.gm||(u.gm={c:200,av:gDef(),own:[],veh:['sepeda'],vh:'sepeda',vc:0,job:'',xp:0,earn:0,hr:{t:0,c:0}});
@@ -450,7 +452,8 @@ function h(q,r,b){
  if(c==='pay'&&m==='GET')return J(r,200,{pay:db.pay||{}});
  if(c==='gm'){const cf=GMC();if(!cf.on&&!isRoot(u))return ER(r,403,'Brohaven sedang ditutup Owner');const g=gmOf(u),sub=S[2];
   if(sub==='world'&&m==='GET'){r.writeHead(200,{'content-type':'application/json','cache-control':'public,max-age=3600','access-control-allow-origin':'*'});return r.end(GWJ)}
-  if(sub==='me'&&m==='GET')return J(r,200,{on:!!cf.on,gm:gmPub(u),pr:GPR,veh:GVEH,mul:cf.mul||1});
+  if(sub==='me'&&m==='GET')return J(r,200,{on:!!cf.on,gm:gmPub(u),pr:GPR,veh:GVEH,mul:cf.mul||1,top:gTop(cf),sal:bal(u)});
+  if(sub==='top'&&m==='POST'){const L=gTop(cf),i=Math.floor(+b.i),p=L[i];if(!p)return ER(r,400,'Paket tidak ada');if(bal(u)<p[1])return ER(r,400,'Saldo Astra tidak cukup. Butuh Rp'+p[1].toLocaleString('id-ID')+', saldomu Rp'+bal(u).toLocaleString('id-ID'));if(g.c+p[0]>1e9)return ER(r,400,'Koin terlalu banyak');const ref='GM'+Date.now().toString(36).toUpperCase()+cr.randomBytes(2).toString('hex').toUpperCase();u.sal=bal(u)-p[1];addTx(u,-p[1],'Top up '+p[0]+' koin Brohaven',ref);g.c+=p[0];sv();return J(r,200,{ok:1,gm:gmPub(u),sal:u.sal,bal:u.sal,tx:u.stx,add:p[0],ref})}
   if(sub==='av'&&m==='POST'){const a=b.av||{},o={};for(const k in GMX){const v=Math.floor(+a[k]);if(!(v>=0&&v<GMX[k]))return ER(r,400,'Pilihan tidak valid');if(GPR[k]&&GPR[k][v]>0&&!g.own.includes(k+v))return ER(r,403,'Item belum kamu beli');o[k]=v}g.av=o;sv();gClients().forEach(x=>x.g.known.delete(u.id));return J(r,200,{ok:1,gm:gmPub(u)})}
   if(sub==='buy'&&m==='POST'){const k=String(b.k),v=b.v;let pr,key;if(k==='veh'){if(!GVEH[v])return ER(r,400,'Kendaraan tidak ada');if(g.veh.includes(v))return ER(r,400,'Sudah kamu miliki');pr=GVEH[v].p;key=v}
    else if(GPR[k]&&Number.isInteger(+v)&&GPR[k][+v]!=null){pr=GPR[k][+v];key=k+(+v);if(g.own.includes(key)||pr===0)return ER(r,400,'Item ini gratis atau sudah kamu miliki')}else return ER(r,400,'Item tidak valid');
@@ -613,10 +616,11 @@ function h(q,r,b){
    wpBusy=1;wpDl(String(b.url||'').trim(),id).then(o=>{wpPend[id]={t:Date.now(),n:o.n,total:o.n,mime:o.mime,done:1};J(r,200,{ok:1,fid:id,size:o.n,mime:o.mime,name:o.name})}).catch(e=>ER(r,400,e.message||'Gagal mengunduh link')).finally(()=>{wpBusy=0});return}
   if(a==='gm'){if(!isRoot(u))return ER(r,403,'Hanya Owner utama');const cf=GMC();
    if(b.act==='set'){cf.on=b.on?1:0;cf.mul=Math.min(10,Math.max(.1,+b.mul||1));sv();if(!cf.on)gClients().forEach(c=>{wsend(c,{t:'off',b:'Brohaven ditutup oleh Owner'});try{c.sock.end()}catch{}});alog(u,'brohaven',cf.on?'dibuka x'+cf.mul:'ditutup')}
+   if(b.act==='top'){const L=(Array.isArray(b.top)?b.top:[]).slice(0,8).map(x=>[Math.floor(+x[0]),Math.floor(+x[1])]);if(!L.length||L.some(x=>!(x[0]>=1&&x[0]<=1e7&&x[1]>=100&&x[1]<=1e7)))return ER(r,400,'Paket tidak valid: koin 1-10.000.000, harga Rp100-10.000.000');cf.top=L;sv();alog(u,'brohaven','paket top up '+L.length)}
    if(b.act==='ann'){const m2=gClean(b.m);if(m2){gClients().forEach(c=>gsend(c,{t:'ann',m:'📢 '+m2}));alog(u,'brohaven','pengumuman: '+m2.slice(0,40))}}
    if(b.act==='kick'){const id=String(b.id);GM.kick[id]=Date.now()+3e5;clients.forEach(c=>{if(c.r==='game'&&c.u.id===id){wsend(c,{t:'off',b:'Kamu dikeluarkan dari Brohaven oleh Owner'});try{c.sock.end()}catch{}}});alog(u,'brohaven','kick '+id)}
    if(b.act==='give'){const t=db.users[String(b.id)];if(!t)return ER(r,404,'Pengguna tidak ada');const a2=Math.max(-1e6,Math.min(1e6,Math.floor(+b.a)||0)),g2=gmOf(t);g2.c=Math.max(0,g2.c+a2);sv();clients.forEach(c=>{if(c.r==='game'&&c.u.id===t.id)gsend(c,{t:'pay',a:a2,c:g2.c,w:a2>=0?'Hadiah dari Owner':'Koin dikurangi Owner'})});alog(u,'brohaven','koin '+a2+' ke '+t.id)}
-   return J(r,200,{cfg:{on:!!cf.on,mul:cf.mul||1},online:gClients().map(c=>({id:c.u.id,name:c.u.name,rm:c.g.rm,x:Math.round(c.g.x),z:Math.round(c.g.z),job:gmOf(c.u).job,c:gmOf(c.u).c,v:c.g.v})),fires:GM.fires.length})}
+   return J(r,200,{cfg:{on:!!cf.on,mul:cf.mul||1,top:gTop(cf)},online:gClients().map(c=>({id:c.u.id,name:c.u.name,rm:c.g.rm,x:Math.round(c.g.x),z:Math.round(c.g.z),job:gmOf(c.u).job,c:gmOf(c.u).c,v:c.g.v})),fires:GM.fires.length})}
   if(a==='spin'){if(!isRoot(u))return ER(r,403,'Hanya Owner utama');
    if(b.act==='set'){const o=spSan(b);if(!o)return ER(r,400,'Pengaturan tidak valid: butuh 2-12 hadiah dan minimal satu hadiah dengan peluang di atas 0');db.spin=o;sv();fast();alog(u,'spin',(o.on?'aktif':'mati')+' · '+o.pr.length+' hadiah');}
    if(b.act==='reset'){db.spin=SPD();sv();fast();alog(u,'spin','pengaturan dikembalikan ke bawaan')}
@@ -667,6 +671,11 @@ function h(q,r,b){
  }
  if(c==='password'&&m==='POST'){if(ph(String(b.old||''),u.salt)!==u.ph)return ER(r,403,'Password lama salah');const n=String(b.new||'');if(n.length<6)return ER(r,400,'Password baru minimal 6 karakter');u.salt=cr.randomBytes(16).toString('hex');u.ph=ph(n,u.salt);sv();return J(r,200,{ok:1})}
  if(c==='sync'&&m==='POST'){if(JSON.stringify(b.data||{}).length>6e5)return ER(r,413,'Data sinkron terlalu besar');bal(u);const d={...(b.data||{})};delete d.saldo;delete d.tx;if(!u.pl&&d.plan&&d.plan!=='free'&&RL.includes(d.plan))u.pl={id:d.plan,exp:+d.planExp||0};d.plan=planOf(u);d.planExp=pexpOf(u);u.data=d;sv();return J(r,200,{ok:1})}
+ if(c==='cloud'){
+  if(m==='POST'){let cl={};try{cl=JSON.parse(u.cls||'{}')}catch(e){}
+   for(const[k,l,ty]of[['chats',7e5,'a'],['stk',3e5,'a'],['ai',4e3,'o']]){if(b[k]==null)continue;if(ty==='a'?!Array.isArray(b[k]):(typeof b[k]!=='object'||Array.isArray(b[k])))return ER(r,400,'Format '+k+' salah');if(JSON.stringify(b[k]).length>l)return ER(r,413,'Data '+k+' terlalu besar');cl[k]=b[k]}
+   cl.t=Date.now();u.cls=JSON.stringify(cl);sv();return J(r,200,{ok:1,t:cl.t})}
+  let cl={};try{cl=JSON.parse(u.cls||'{}')}catch(e){}return J(r,200,cl)}
  if(c==='logoutall'){u.ep++;sv();return J(r,200,{ok:1})}
  if(c==='delete'&&m==='POST'){delete db.users[u.id];delete db.mail[u.email];sv();return J(r,200,{ok:1})}
  if(c==='status'){

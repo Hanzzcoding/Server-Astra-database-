@@ -270,6 +270,14 @@ const SPD=()=>({on:1,ttl:24,capBal:100000,pr:[
 const wibDay=n=>new Date((n||Date.now())+7*36e5).toISOString().slice(0,10);
 const toMid=()=>{const n=Date.now(),d=new Date(n+7*36e5);return Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()+1)-7*36e5-n};
 const spCfg=()=>db.spin||(db.spin=SPD());
+const dyCfg=()=>{const c=db.dly||(db.dly={on:1,amt:1000,amt7:1500});if(!Array.isArray(c.amts)||c.amts.length!==7)c.amts=[c.amt,c.amt,c.amt,c.amt,c.amt,c.amt,c.amt7].map(x=>Math.max(0,Math.floor(+x)||0));if(!c.prize||!['menit','jam','hari'].includes(c.prize.unit))c.prize={on:1,unit:'hari',val:1};return c};
+const dyDiff=(a,b)=>Math.round((Date.parse(b)-Date.parse(a))/864e5);
+const dyAdd=(d,n)=>new Date(Date.parse(d)+n*864e5).toISOString().slice(0,10);
+const dyCyc=u=>{const t=wibDay(),c=u.dyc;if(c&&c.s){const k=dyDiff(c.s,t);if(k>=0&&k<7)return{s:c.s,c:(c.c||[]).slice()}}return{s:t,c:[]}};
+const dyMs=p=>({menit:6e4,jam:36e5,hari:864e5}[p.unit]||864e5)*p.val;
+const dyState=u=>{const cf=dyCfg(),t=wibDay(),cy=dyCyc(u),i=dyDiff(cy.s,t),done=cy.c.includes(t),slots=[];let miss=0;
+ for(let k=0;k<7;k++){const d=dyAdd(cy.s,k),st=cy.c.includes(d)?'done':k<i?'miss':k===i?'today':'future';if(st==='miss')miss++;slots.push({k:k+1,d,st,amt:cf.amts[k]})}
+ return{on:!!cf.on,can:!!cf.on&&!done,done,day:i+1,slots,miss,amt:cf.amts[i],amts:cf.amts,streak:cy.c.length,prize:cf.prize.on?{n:PTAB.go25.n,p:PTAB.go25.p,dur:cf.prize.val+' '+cf.prize.unit}:null,next:toMid()}};
 const spStat=()=>{const d=wibDay();if(!db.spd||db.spd.d!==d)db.spd={d,n:0,bal:0,c:{},log:(db.spd&&db.spd.log)||[]};return db.spd};
 const spLabel=p=>p.l||(p.t==='disc'?'Diskon '+p.v+'%':p.t==='bal'?'Saldo Rp'+Number(p.v).toLocaleString('id-ID'):p.t==='plan'?'Premium '+p.v+' hari':'Belum beruntung');
 const spView=(adm)=>{const c=spCfg();return{on:!!c.on,ttl:c.ttl,capBal:c.capBal,pr:c.pr.map(p=>({id:p.id,t:p.t,v:p.v,l:spLabel(p),...(adm?{w:p.w,mx:p.mx,cl:p.l||''}:{})}))}};
@@ -461,6 +469,13 @@ function h(q,r,b){
   if(sub==='veh'&&m==='POST'){const v=String(b.v),cc=Math.floor(+b.c);if(!g.veh.includes(v))return ER(r,403,'Kendaraan belum kamu miliki');g.vh=v;if(cc>=0&&cc<8)g.vc=cc;sv();gClients().forEach(x=>x.g.known.delete(u.id));return J(r,200,{ok:1,gm:gmPub(u)})}
   if(sub==='job'&&m==='POST'){const j=String(b.j||'');if(j&&!['kurir','polisi','pemadam'].includes(j))return ER(r,400,'Pekerjaan tidak ada');g.job=j;sv();gClients().forEach(x=>{x.g.known.delete(u.id);if(x.u.id===u.id){x.g.ord=null;if(j==='kurir'||j==='polisi')gOrder(x);else gsend(x,{t:'ord',o:null})}});return J(r,200,{ok:1,gm:gmPub(u)})}
   return ER(r,404,'Tidak ditemukan')}
+ if(c==='daily'&&m==='GET')return J(r,200,dyState(u));
+ if(c==='daily'&&S[2]==='claim'&&m==='POST'){const cf=dyCfg();if(!cf.on)return ER(r,403,'Bonus harian sedang tidak aktif');const t=wibDay(),cy=dyCyc(u);if(cy.c.includes(t))return ER(r,429,'Bonus hari ini sudah diklaim. Reset tengah malam WIB');
+  const i=dyDiff(cy.s,t),amt=cf.amts[i]||0,perfect=i===6&&[0,1,2,3,4,5].every(k=>cy.c.includes(dyAdd(cy.s,k)));
+  if(amt>0){bal(u);u.sal=bal(u)+amt;addTx(u,amt,'Bonus login harian hari ke-'+(i+1),'DL'+Date.now().toString(36).toUpperCase())}
+  cy.c.push(t);u.dyc={s:cy.s,c:cy.c};u.dyl={d:t,st:cy.c.length};let pz='';
+  if(i===6&&cf.prize.on){if(!perfect)pz='Hadiah GO ASTRA Mini hanya untuk yang login 7 hari penuh tanpa bolong. Coba lagi di putaran berikutnya!';else if(isRoot(u))pz='Premium tidak berlaku untuk Owner (sudah unlimited)';else{const ms=dyMs(cf.prize),cur=planOf(u);if(cur==='free'||!PTAB[cur])u.pl={id:'go25',exp:Date.now()+ms};else{const ex=pexpOf(u);if(ex)u.pl.exp=ex+ms}pz='Selamat! Kamu dapat '+PTAB.go25.n+' selama '+cf.prize.val+' '+cf.prize.unit;alog(u,'bonus harian','hadiah '+PTAB.go25.n+' '+cf.prize.val+' '+cf.prize.unit)}}
+  sv();return J(r,200,{ok:1,add:amt,pz,bal:bal(u),tx:u.stx,pl:plInfo(u),...dyState(u)})}
  if(c==='spin'&&m==='GET')return J(r,200,{...spView(false),...spState(u),hist:spStat().log.slice(0,8)});
  if(c==='spin'&&S[2]==='go'&&m==='POST'){const cf=spCfg();if(!cf.on)return ER(r,403,'Event Spin sedang tidak aktif');const today=wibDay();
   if(u.sp===today)return ER(r,429,'Jatah spin hari ini sudah dipakai. Reset tengah malam WIB');
@@ -621,6 +636,10 @@ function h(q,r,b){
    if(b.act==='kick'){const id=String(b.id);GM.kick[id]=Date.now()+3e5;clients.forEach(c=>{if(c.r==='game'&&c.u.id===id){wsend(c,{t:'off',b:'Kamu dikeluarkan dari Brohaven oleh Owner'});try{c.sock.end()}catch{}}});alog(u,'brohaven','kick '+id)}
    if(b.act==='give'){const t=db.users[String(b.id)];if(!t)return ER(r,404,'Pengguna tidak ada');const a2=Math.max(-1e6,Math.min(1e6,Math.floor(+b.a)||0)),g2=gmOf(t);g2.c=Math.max(0,g2.c+a2);sv();clients.forEach(c=>{if(c.r==='game'&&c.u.id===t.id)gsend(c,{t:'pay',a:a2,c:g2.c,w:a2>=0?'Hadiah dari Owner':'Koin dikurangi Owner'})});alog(u,'brohaven','koin '+a2+' ke '+t.id)}
    return J(r,200,{cfg:{on:!!cf.on,mul:cf.mul||1,top:gTop(cf)},online:gClients().map(c=>({id:c.u.id,name:c.u.name,rm:c.g.rm,x:Math.round(c.g.x),z:Math.round(c.g.z),job:gmOf(c.u).job,c:gmOf(c.u).c,v:c.g.v})),fires:GM.fires.length})}
+  if(a==='daily'){if(!isRoot(u))return ER(r,403,'Hanya Owner utama');const cf=dyCfg();
+   if(b.act==='set'){const am=(Array.isArray(b.amts)?b.amts:[]).slice(0,7).map(x=>Math.floor(+x));if(am.length!==7||am.some(x=>!(x>=0&&x<=1e6)))return ER(r,400,'Nominal tiap hari harus 0 - 1.000.000');const pz=b.prize||{},un=['menit','jam','hari'].includes(pz.unit)?pz.unit:'hari',mx={menit:525600,jam:8760,hari:365}[un],val=Math.floor(+pz.val);if(pz.on&&!(val>=1&&val<=mx))return ER(r,400,'Durasi hadiah harus 1 - '+mx+' '+un);
+    cf.on=b.on?1:0;cf.amts=am;cf.amt=am[0];cf.amt7=am[6];cf.prize={on:pz.on?1:0,unit:un,val:val>=1?Math.min(mx,val):1};sv();alog(u,'bonus harian',(cf.on?'aktif ':'mati ')+am.join('/')+' · hadiah '+(cf.prize.on?cf.prize.val+' '+un:'mati'))}
+   return J(r,200,{cfg:{on:!!cf.on,amts:cf.amts,prize:cf.prize}})}
   if(a==='spin'){if(!isRoot(u))return ER(r,403,'Hanya Owner utama');
    if(b.act==='set'){const o=spSan(b);if(!o)return ER(r,400,'Pengaturan tidak valid: butuh 2-12 hadiah dan minimal satu hadiah dengan peluang di atas 0');db.spin=o;sv();fast();alog(u,'spin',(o.on?'aktif':'mati')+' · '+o.pr.length+' hadiah');}
    if(b.act==='reset'){db.spin=SPD();sv();fast();alog(u,'spin','pengaturan dikembalikan ke bawaan')}

@@ -642,7 +642,7 @@ function h(q,r,b){
    if(live)return ER(r,409,'Sudah ada live yang berjalan');
    const title=String(b.title||'').trim().slice(0,60)||'Live ASTRA';
    live={host:u.id,hn:u.name,title,t:Date.now(),kind:null,mime:'',init:null,cur:Buffer.alloc(0),head:null,jpg:null,ad:null,txt:[],fx:{theme:'neon',anim:'slide'},goal:null,pinc:null,lslow:0,lkn:0,gifts:0,top:{},peak:0,cm:true,mute:new Set(),cmt:[],lj:0,hostGone:Date.now(),snapOn:null};
-   say('🔴 '+u.name+' sedang LIVE: "'+title+'". Ketuk tombol LIVE untuk menonton!');alog(u,'live mulai',title);
+   say('🔴 '+u.name+' sedang LIVE: "'+title+'". Ketuk tombol LIVE merah di atas layar atau tombol Tonton di bawah ini!');alog(u,'live mulai',title);
    return J(r,200,{ok:1,live:lpub()})}
   if(a==='stop'){endLive('Siaran selesai');alog(u,'live selesai','');return J(r,200,{ok:1})}
   if(a==='mod'){

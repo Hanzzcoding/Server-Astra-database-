@@ -154,9 +154,9 @@ const GM={fires:[],kick:{},ann:''};
 const gClients=()=>[...clients].filter(c=>c.r==='game'&&c.g);
 const gsend=(c,o)=>wsend(c,o);
 function gGive(c,amt,why){const u=c.u,g=gmOf(u),hr=Math.floor(Date.now()/36e5);if(!g.hr||g.hr.t!==hr)g.hr={t:hr,c:0};
- let a=Math.round(amt*(GMC().mul||1));const cap=4000;if(g.hr.c+a>cap)a=Math.max(0,cap-g.hr.c);
+ let a=Math.round(amt*(GMC().mul||1)*fxEvI().mult);const cap=4000;if(g.hr.c+a>cap)a=Math.max(0,cap-g.hr.c);
  if(a<=0){gsend(c,{t:'pay',a:0,c:g.c,w:'Batas gaji per jam tercapai, istirahat dulu ya'});return 0}
- g.hr.c+=a;g.c+=a;g.xp=(g.xp||0)+a;sv();gsend(c,{t:'pay',a,c:g.c,w:why,lv:Math.floor(Math.sqrt(g.xp/40))+1});return a}
+ g.hr.c+=a;g.c+=a;g.xp=(g.xp||0)+a;{const wk=fxWk();if(!g.we||g.we.w!==wk)g.we={w:wk,c:0};g.we.c+=a}sv();gsend(c,{t:'pay',a,c:g.c,w:why,lv:Math.floor(Math.sqrt(g.xp/40))+1});return a}
 const gDist=(c,x,z)=>Math.hypot(c.g.x-x,c.g.z-z);
 function gOrder(c){const g=gmOf(c.u);c.g.ord=null;
  if(g.job==='kurir'){const post=GW.bld.find(b=>b.t==='post');c.g.ord={k:'kurir',st:0,tx:post.dx,tz:post.dz,t0:Date.now(),fx:c.g.x,fz:c.g.z,msg:'Ambil paket di Kantor Pos'}}
@@ -164,34 +164,34 @@ function gOrder(c){const g=gmOf(c.u);c.g.ord=null;
  gsend(c,{t:'ord',o:c.g.ord&&{k:c.g.ord.k,st:c.g.ord.st,tx:c.g.ord.tx,tz:c.g.ord.tz,msg:c.g.ord.msg,pts:c.g.ord.pts,n:c.g.ord.st}})}
 function gDeliver(c){const o=c.g.ord;if(!o||c.g.rm!=='w')return;if(gDist(c,o.tx,o.tz)>9)return;const dist=Math.hypot(o.tx-o.fx,o.tz-o.fz),el=(Date.now()-o.t0)/1e3;if(el<dist/45)return gsend(c,{t:'warn',b:'Terlalu cepat, tetap di jalan ya'});
  if(o.k==='kurir'){if(o.st===0){const hs=GW.bld.filter(b=>b.t==='house'),h=hs[Math.floor(Math.random()*hs.length)];c.g.ord={k:'kurir',st:1,tx:h.dx,tz:h.dz,t0:Date.now(),fx:o.tx,fz:o.tz,msg:'Antar paket ke '+h.nm+' (ID '+h.id.slice(1)+')'};gOrderSend(c)}
-  else{gGive(c,30+Math.floor(dist/4),'Paket terkirim!');gOrder(c)}}
- else if(o.k==='polisi'){const i=o.st+1;if(i>=4){gGive(c,130,'Patroli selesai!');gOrder(c)}else{c.g.ord={...o,st:i,tx:o.pts[i][0],tz:o.pts[i][1],t0:Date.now(),fx:o.tx,fz:o.tz,msg:'Titik '+(i+1)+' dari 4'};gOrderSend(c)}}}
+  else{gGive(c,30+Math.floor(dist/4),'Paket terkirim!');fxEv(c.u,'deliv',1);gOrder(c)}}
+ else if(o.k==='polisi'){const i=o.st+1;if(i>=4){gGive(c,130,'Patroli selesai!');fxEv(c.u,'patrol',1);gOrder(c)}else{c.g.ord={...o,st:i,tx:o.pts[i][0],tz:o.pts[i][1],t0:Date.now(),fx:o.tx,fz:o.tz,msg:'Titik '+(i+1)+' dari 4'};gOrderSend(c)}}}
 const gOrderSend=c=>{const o=c.g.ord;gsend(c,{t:'ord',o:o&&{k:o.k,st:o.st,tx:o.tx,tz:o.tz,msg:o.msg,pts:o.pts}})};
 function gFires(){const f=GM.fires.map(x=>[x.id,x.x,x.z,Math.max(0,Math.round(x.hp))]);gClients().forEach(c=>gsend(c,{t:'fires',f}))}
 setInterval(()=>{const now=Date.now();let ch=0;GM.fires=GM.fires.filter(f=>{if(now-f.t>24e4){ch=1;return false}return true});
  if(GMC().on&&gClients().length&&GM.fires.length<3&&Math.random()<.5){const hs=GW.bld.filter(b=>b.t==='house'),h=hs[Math.floor(Math.random()*hs.length)];GM.fires.push({id:'f'+now.toString(36),x:h.dx,z:h.dz,hp:100,t:now,by:{}});ch=1;gClients().forEach(c=>gmOf(c.u).job==='pemadam'&&gsend(c,{t:'ann',m:'🔥 Kebakaran di '+h.nm+'! Pemadam segera ke lokasi'}))}
  if(ch)gFires()},30000);
-function gInfo(c,o){const g=gmOf(o.u);gsend(c,{t:'pi',id:o.u.id,n:o.u.name,av:g.av,jb:g.job,vh:g.vh,vc:g.vc,lv:Math.floor(Math.sqrt((g.xp||0)/40))+1,rl:isRoot(o.u)?'root':isAdm(o.u)?'owner':''})}
-function gmJoin(c){const u=c.u;if(!GMC().on){wsend(c,{t:'off'});setTimeout(()=>{try{c.sock.end()}catch{}},200);return}
+function gInfo(c,o){const g=gmOf(o.u);gsend(c,{t:'pi',id:o.u.id,n:o.u.name,av:g.av,jb:g.job,vh:g.vh,vc:g.vc,lv:Math.floor(Math.sqrt((g.xp||0)/40))+1,tt:ttlOf(o.u),rl:isRoot(o.u)?'root':isAdm(o.u)?'owner':''})}
+function gmJoin(c){const u=c.u;fxEv(u,'bh',1);if(!GMC().on){wsend(c,{t:'off'});setTimeout(()=>{try{c.sock.end()}catch{}},200);return}
  if(isAB(u)||(GM.kick[u.id]||0)>Date.now()){wsend(c,{t:'off',b:'Kamu tidak bisa masuk Brohaven sekarang'});setTimeout(()=>{try{c.sock.end()}catch{}},200);return}
  clients.forEach(o=>{if(o!==c&&o.r==='game'&&o.u.id===u.id){wsend(o,{t:'off',b:'Akunmu masuk dari perangkat lain'});try{o.sock.end()}catch{}}});
  const sp=GW.bld.find(b=>b.t==='hall');c.g={x:sp.dx,y:0,z:sp.dz+4,r:0,a:0,v:'',rm:'w',ts:Date.now(),known:new Set(),ord:null,lc:0,lf:0};
  const g=gmOf(u);if(g.job==='kurir'||g.job==='polisi')gOrder(c);
- gsend(c,{t:'hi',id:u.id,gm:gmPub(u),fires:GM.fires.map(x=>[x.id,x.x,x.z,Math.round(x.hp)]),mul:GMC().mul||1})}
+ gsend(c,{t:'hi',id:u.id,gm:gmPub(u),fires:GM.fires.map(x=>[x.id,x.x,x.z,Math.round(x.hp)]),mul:GMC().mul||1,ev:fxEvI(),race:{pts:RACE_PTS,st:RACE_ST}})}
 function gmLeft(c){if(!c.g)return;gClients().forEach(o=>{if(o.g.known.delete(c.u.id))gsend(o,{t:'pl',id:c.u.id})})}
 const gClean=m=>String(m||'').replace(/\s+/g,' ').trim().slice(0,90);
 function gmMsg(c,m){const u=c.u,g=c.g;if(!g||!m||typeof m.t!=='string')return;if(isAB(u)){try{c.sock.end()}catch{}return}const now=Date.now(),gm=gmOf(u);
  if(m.t==='s'){const x=+m.x,y=+m.y,z=+m.z,r=+m.r;if(![x,y,z,r].every(Number.isFinite)||Math.abs(x)>400||Math.abs(z)>400)return;const rm=/^(w|b\d{1,3})$/.test(m.rm)?m.rm:'w';
   const dt=Math.min(1,Math.max(.05,(now-g.ts)/1e3));if(!process.env.GMT&&rm===g.rm&&Math.hypot(x-g.x,z-g.z)>50*dt+5){gsend(c,{t:'tp',x:g.x,z:g.z,rm:g.rm});return}
-  g.ts=now;g.x=x;g.y=Math.max(0,Math.min(30,y));g.z=z;g.r=r;g.rm=rm;g.a=(m.a|0)>=0&&(m.a|0)<=6?(m.a|0):0;
+  if(rm==='w'&&g.rm==='w'){const dd=Math.hypot(x-g.x,z-g.z);if(dd<60)g.da=(g.da||0)+dd;if(g.da>=40){fxEv(u,'dist',Math.floor(g.da));g.da=0}}g.ts=now;g.x=x;g.y=Math.max(0,Math.min(30,y));g.z=z;g.r=r;g.rm=rm;g.a=(m.a|0)>=0&&(m.a|0)<=6?(m.a|0):0;
   const vm=/^([a-z]+):(\d)$/.exec(String(m.v||''));g.v=vm&&gm.veh.includes(vm[1])&&GVEH[vm[1]]?vm[1]+':'+vm[2]:'';return}
- if(m.t==='c'){const tx=gClean(m.m);if(!tx||now-g.lc<1200)return;if(u.mute&&u.mute>now&&!isRoot(u))return gsend(c,{t:'warn',b:'Kamu di-mute oleh Owner'});if(BAD.test(tx)||LINK.test(tx)||CODE.test(tx)){LINK.lastIndex=0;return gsend(c,{t:'warn',b:'Pesan ditolak: link, judi, atau kode tidak diizinkan'})}LINK.lastIndex=0;g.lc=now;
+ if(m.t==='c'){const tx=gClean(m.m);if(!tx||now-g.lc<1200)return;if(u.mute&&u.mute>now&&!isRoot(u))return gsend(c,{t:'warn',b:'Kamu di-mute oleh Owner'});if(BAD.test(tx)||LINK.test(tx)||CODE.test(tx)){LINK.lastIndex=0;return gsend(c,{t:'warn',b:'Pesan ditolak: link, judi, atau kode tidak diizinkan'})}LINK.lastIndex=0;g.lc=now;fxEv(u,'gchat',1);
   const rl=isRoot(u)?'root':isAdm(u)?'owner':'';gClients().forEach(o=>gsend(o,{t:'c',id:u.id,n:u.name,m:tx,rl,nr:o.g.rm===g.rm&&(g.rm!=='w'||Math.hypot(o.g.x-g.x,o.g.z-g.z)<160)?1:0}));return}
  if(m.t==='who'){if(now-(g.lw||0)<2500)return;g.lw=now;gsend(c,{t:'who',p:gClients().slice(0,150).map(o=>{const gg=gmOf(o.u);return[o.u.id,o.u.name,Math.floor(Math.sqrt((gg.xp||0)/40))+1,gg.job||'',o.g.rm==='w'?0:1,isRoot(o.u)?'root':isAdm(o.u)?'owner':'']})});return}
  if(m.t==='jo'){if(gm.job==='kurir'||gm.job==='polisi')gOrder(c);return}
  if(m.t==='jd'){gDeliver(c);return}
  if(m.t==='fx'){if(gm.job!=='pemadam'||g.rm!=='w'||now-g.lf<140)return;g.lf=now;const f=GM.fires.find(x=>x.id===m.id);if(!f||gDist(c,f.x,f.z)>11)return;f.hp-=3.2;f.by[u.id]=(f.by[u.id]||0)+3.2;
-  if(f.hp<=0){GM.fires=GM.fires.filter(x=>x!==f);clients.forEach(o=>{if(o.r==='game'&&o.g&&f.by[o.u.id]>=20)gGive(o,90,'Api padam! Kerja bagus')});gFires()}else if((f._n=(f._n||0)+1)%12===0)gFires();return}}
+  if(f.hp<=0){GM.fires=GM.fires.filter(x=>x!==f);clients.forEach(o=>{if(o.r==='game'&&o.g&&f.by[o.u.id]>=20){gGive(o,90,'Api padam! Kerja bagus');fxEv(o.u,'fire',1)}});gFires()}else if((f._n=(f._n||0)+1)%12===0)gFires();return}}
 setInterval(()=>{const G=gClients();if(!G.length)return;const now=Date.now(),by={};G.forEach(c=>(by[c.g.rm]=by[c.g.rm]||[]).push(c));
  G.forEach(c=>{const L=by[c.g.rm].filter(o=>o!==c);let P=L;if(c.g.rm==='w'){P=L.map(o=>({o,d:Math.hypot(o.g.x-c.g.x,o.g.z-c.g.z)})).filter(x=>x.d<150).sort((a,b)=>a.d-b.d).slice(0,45).map(x=>x.o)}
   const seen=new Set();const sn=P.map(o=>{seen.add(o.u.id);if(!c.g.known.has(o.u.id)){c.g.known.add(o.u.id);gInfo(c,o)}return[o.u.id,+o.g.x.toFixed(1),+o.g.y.toFixed(1),+o.g.z.toFixed(1),+o.g.r.toFixed(2),o.g.a,o.g.v]});
@@ -260,8 +260,8 @@ const tierOf=p=>p<2500?1:p<15000?2:p<100000?3:p<750000?4:5;
 const GIFTS=GRAW.replace(/\n/g,'').split(';').map((x,i)=>{const [n,e,p]=x.split('|');return{id:'g'+(i+1),n,e,p:+p,tier:tierOf(+p)}});
 const GMAP=Object.fromEntries(GIFTS.map(g=>[g.id,g]));
 const PTAB={go25:{p:25000,d:30,n:'GO ASTRA Mini'},go50:{p:50000,d:30,n:'GO ASTRA Lite'},go75:{p:75000,d:30,n:'GO ASTRA Plus'},go150:{p:150000,d:30,n:'GO ASTRA Elite'},go250:{p:250000,d:30,n:'GO ASTRA Pro'},q3:{p:180000,d:90,n:'GO ASTRA Kuartal'},y1:{p:1000000,d:365,n:'GO ASTRA Tahunan'},y2:{p:2000000,d:730,n:'GO ASTRA 2 Tahun'},y5:{p:5000000,d:1825,n:'GO ASTRA Sultan'}};
-const peff=id=>{const o=(db.prices||{})[id],b=PTAB[id];return o&&o.p>=0&&(!o.until||o.until>Date.now())?o.p:b.p};
-const ptab=()=>{const r={};for(const id in PTAB){const o=(db.prices||{})[id];if(o&&o.p>=0&&(!o.until||o.until>Date.now()))r[id]={p:o.p,was:PTAB[id].p,note:o.note||'',until:o.until||0}}return r};
+const peff=id=>{const o=(db.prices||{})[id],b=PTAB[id],r=o&&o.p>=0&&(!o.until||o.until>Date.now())?o.p:b.p,s=saleOn();return s?Math.min(r,Math.floor(b.p*(1-s.pct/100))):r};
+const ptab=()=>{const r={},s=saleOn();for(const id in PTAB){const o=(db.prices||{})[id];if(o&&o.p>=0&&(!o.until||o.until>Date.now()))r[id]={p:o.p,was:PTAB[id].p,note:o.note||'',until:o.until||0};if(s){const sp=Math.floor(PTAB[id].p*(1-s.pct/100));if(!r[id]||sp<r[id].p)r[id]={p:sp,was:PTAB[id].p,note:s.label+' -'+s.pct+'%',until:s.end}}}return r};
 /* ===== EVENT SPIN: 1x/hari, undian di server, diatur Owner utama ===== */
 const SPD=()=>({on:1,ttl:24,capBal:100000,pr:[
  {id:'d5',t:'disc',v:5,w:22,mx:0},{id:'d10',t:'disc',v:10,w:14,mx:0},{id:'d25',t:'disc',v:25,w:6,mx:50},{id:'d50',t:'disc',v:50,w:1,mx:3},
@@ -275,6 +275,57 @@ const dyDiff=(a,b)=>Math.round((Date.parse(b)-Date.parse(a))/864e5);
 const dyAdd=(d,n)=>new Date(Date.parse(d)+n*864e5).toISOString().slice(0,10);
 const dyCyc=u=>{const t=wibDay(),c=u.dyc;if(c&&c.s){const k=dyDiff(c.s,t);if(k>=0&&k<7)return{s:c.s,c:(c.c||[]).slice()}}return{s:t,c:[]}};
 const dyMs=p=>({menit:6e4,jam:36e5,hari:864e5}[p.unit]||864e5)*p.val;
+/* ===== FX: misi, event, voucher, referral, flash sale, lencana, peringkat ===== */
+const FXMIS=[
+ {id:'chat',n:'Ngobrol dengan ASTRA',d:'Kirim 20 pesan ke ASTRA AI',per:'w',k:'chat',g:20,r:'sal',a:1000},
+ {id:'login',n:'Rajin Login',d:'Klaim bonus harian 5 kali minggu ini',per:'w',k:'login',g:5,r:'sal',a:1500},
+ {id:'bh3',n:'Warga Brohaven',d:'Masuk Brohaven 3 kali',per:'w',k:'bh',g:3,r:'coin',a:300},
+ {id:'jobw',n:'Pekerja Keras',d:'Selesaikan 10 pekerjaan di Brohaven',per:'w',k:'job',g:10,r:'coin',a:800},
+ {id:'n1',npc:'budi',n:'Antar Paket Pak Budi',d:'Selesaikan 2 pengantaran paket (job Kurir)',per:'d',k:'deliv',g:2,r:'coin',a:150},
+ {id:'n2',npc:'sari',n:'Jalan Sehat Bu Sari',d:'Tempuh 800 meter (jalan atau berkendara)',per:'d',k:'dist',g:800,r:'coin',a:120},
+ {id:'n6',npc:'sari',n:'Ngobrol Santai',d:'Kirim 3 pesan di chat Brohaven',per:'d',k:'gchat',g:3,r:'coin',a:80},
+ {id:'n3',npc:'rina',n:'Patroli Warga',d:'Selesaikan 1 patroli (job Polisi)',per:'d',k:'patrol',g:1,r:'coin',a:200},
+ {id:'n4',npc:'joko',n:'Pemadam Sukarela',d:'Padamkan 1 kebakaran (job Pemadam)',per:'d',k:'fire',g:1,r:'coin',a:250},
+ {id:'n5',npc:'rey',n:'Lomba Balap Bang Rey',d:'Selesaikan 1 balapan keliling kota',per:'d',k:'race',g:1,r:'coin',a:300}];
+const RACE_PTS=[[80,-80],[80,80],[-80,80],[-80,-80]],RACE_ST=[-80,-80];
+const fxCfg=()=>{const c=db.fx||(db.fx={});
+ if(!c.mo)c.mo={};
+ if(!c.ev)c.ev={on:0,mult:2,wk:1,until:0,label:'Coins Ganda'};
+ if(!c.sale)c.sale={on:0,pct:20,start:0,end:0,label:'Flash Sale'};
+ if(!c.ref)c.ref={on:1,a:2000,b:1000,max:20};
+ if(!c.rd)c.rd={on:1,p:2000};
+ if(!c.race)c.race={on:1,t:45,c:300};
+ if(!c.vch)c.vch={};return c};
+const fxDefs=()=>{const mo=fxCfg().mo;return FXMIS.map(x=>({...x,...(mo[x.id]||{})}))};
+const fxWk=()=>{const d=wibDay(),w=new Date(d+'T00:00:00Z').getUTCDay();return dyAdd(d,-((w+6)%7))};
+const fxM=u=>{const m=u.ms||(u.ms={dk:'',wk:'',d:{},w:{},cd:[],cw:[]}),t=wibDay(),w=fxWk();if(m.dk!==t){m.dk=t;m.d={};m.cd=[]}if(m.wk!==w){m.wk=w;m.w={};m.cw=[]}return m};
+const FXK={deliv:['deliv','job'],patrol:['patrol','job'],fire:['fire','job']};
+const fxEv=(u,k,n)=>{n=Math.max(0,Math.min(5000,Math.floor(+n)||0));if(!n)return;const m=fxM(u),st=u.fxs||(u.fxs={});
+ if(k==='bh'){const now=Date.now();if(now-(st.bt||0)<18e5)return;st.bt=now}
+ for(const q of(FXK[k]||[k])){m.d[q]=Math.min(1e7,(m.d[q]||0)+n);m.w[q]=Math.min(1e7,(m.w[q]||0)+n);st[q]=Math.min(1e9,(st[q]||0)+n)}sv()};
+const fxMis=u=>{const m=fxM(u);return fxDefs().filter(x=>x.on!==0).map(x=>({id:x.id,npc:x.npc||'',n:x.n,d:x.d.replace(/\d[\d.]*/,x.g),per:x.per,g:x.g,r:x.r,a:x.a,p:Math.min(x.g,(x.per==='d'?m.d:m.w)[x.k]||0),cl:(x.per==='d'?m.cd:m.cw).includes(x.id)}))};
+const fxEvI=()=>{const e=fxCfg().ev,now=Date.now(),w=new Date(wibDay()+'T00:00:00Z').getUTCDay(),wk=!!e.wk&&(w===0||w===6),man=!!e.on&&(!e.until||e.until>now),act=man||wk;return{on:act,mult:act?e.mult:1,label:e.label,until:man?e.until:0,wk:wk&&!man}};
+const saleOn=()=>{const s=fxCfg().sale;return s.on&&s.end>Date.now()&&(!s.start||s.start<=Date.now())?s:null};
+const dyDays=u=>{const s=new Set(u.dyh||[]);((u.dyc||{}).c||[]).forEach(x=>s.add(x));return s};
+const dyStreak=u=>{const s=dyDays(u);let t=wibDay();if(!s.has(t))t=dyAdd(t,-1);let n=0;while(s.has(t)&&n<999){n++;t=dyAdd(t,-1)}return n};
+const dyBest=u=>Math.max(u.dyb||0,dyStreak(u));
+const fxDy=(u,d,login)=>{const h=u.dyh||(u.dyh=[]);if(!h.includes(d))h.push(d);if(h.length>400)h.splice(0,h.length-400);u.dyb=Math.max(u.dyb||0,dyStreak(u));if(login)fxEv(u,'login',1)};
+const BADGES=[
+ ['l7','Setia 7 Hari','Streak login 7 hari',u=>dyBest(u)>=7],['l30','Legenda Login','Streak login 30 hari',u=>dyBest(u)>=30],
+ ['ch','Sahabat ASTRA','Kirim 200 pesan ke ASTRA',u=>((u.fxs||{}).chat||0)>=200],['mm','Misi Master','Klaim 10 misi',u=>(u.fxm||0)>=10],
+ ['dt','Duta ASTRA','Ajak 3 teman bergabung',u=>(u.rn||0)>=3],['kr','Kurir Cepat','Antar 25 paket di Brohaven',u=>((u.fxs||{}).deliv||0)>=25],
+ ['pm','Pemadam Handal','Padamkan 10 kebakaran',u=>((u.fxs||{}).fire||0)>=10],['pj','Penjelajah','Tempuh 10 km di Brohaven',u=>((u.fxs||{}).dist||0)>=1e4],
+ ['rc','Pebalap','Selesaikan 1 balapan',u=>((u.fxs||{}).race||0)>=1],['rj','Raja Jalanan','Finis balapan di bawah target waktu',u=>{const b=(u.gm||{}).rb;return b>0&&b<=fxCfg().race.t}],
+ ['sl','Sultan Koin','Punya 100.000 koin Brohaven',u=>((u.gm||{}).c||0)>=1e5]];
+const fxBdg=u=>BADGES.map(b=>({id:b[0],n:b[1],d:b[2],ok:!!b[3](u)}));
+const ttlOf=u=>{const b=BADGES.find(x=>x[0]===u.ttl);return b&&b[3](u)?b[1]:''};
+const refCode=u=>{if(!u.rc){db.rix=db.rix||{};let c;do c=cr.randomBytes(3).toString('hex').toUpperCase();while(db.rix[c]);u.rc=c;db.rix[c]=u.id;sv()}return u.rc};
+const LBC={};
+const fxLb=k=>{const c=LBC[k];if(c&&Date.now()-c.t<30000)return c.v;const arr=[],wk=fxWk();
+ for(const id in db.users){const u=db.users[id];if(!u||isAB(u)||isRoot(u))continue;const g=u.gm||{};let v=0;
+  if(k==='streak')v=dyStreak(u);else if(k==='coin')v=g.we&&g.we.w===wk?g.we.c:0;else if(k==='race')v=g.rw&&g.rw.w===wk?g.rw.t:0;
+  if(v>0)arr.push({id,n:u.name,v,t:ttlOf(u)})}
+ arr.sort((a,b)=>k==='race'?a.v-b.v:b.v-a.v);LBC[k]={t:Date.now(),v:arr};return arr};
 const dyState=u=>{const cf=dyCfg(),t=wibDay(),cy=dyCyc(u),i=dyDiff(cy.s,t),done=cy.c.includes(t),slots=[];let miss=0;
  for(let k=0;k<7;k++){const d=dyAdd(cy.s,k),st=cy.c.includes(d)?'done':k<i?'miss':k===i?'today':'future';if(st==='miss')miss++;slots.push({k:k+1,d,st,amt:cf.amts[k]})}
  return{on:!!cf.on,can:!!cf.on&&!done,done,day:i+1,slots,miss,amt:cf.amts[i],amts:cf.amts,streak:cy.c.length,prize:cf.prize.on?{n:PTAB.go25.n,p:PTAB.go25.p,dur:cf.prize.val+' '+cf.prize.unit}:null,next:toMid()}};
@@ -458,9 +509,39 @@ function h(q,r,b){
   seen[u.id]=Date.now();
  if(db.maint&&!isAdm(u)&&c!=='hb')return ER(r,503,'Server sedang pemeliharaan: '+db.maint);
  if(c==='pay'&&m==='GET')return J(r,200,{pay:db.pay||{}});
+ /* ===== FX routes ===== */
+ if(c==='daily'&&S[2]==='redeem'&&m==='POST'){const cf=dyCfg(),rd=fxCfg().rd;if(!cf.on||!rd.on)return ER(r,403,'Tebus hari bolong sedang tidak aktif');
+  const d=String(b.d||''),st=dyState(u),sl=st.slots.find(x=>x.d===d);if(!sl||sl.st!=='miss')return ER(r,400,'Tanggal ini tidak bisa ditebus');
+  if(bal(u)<rd.p)return ER(r,400,'Saldo tidak cukup. Tebus butuh Rp'+rd.p.toLocaleString('id-ID'));
+  u.sal=bal(u)-rd.p;addTx(u,-rd.p,'Tebus hari bolong '+d,'TB'+Date.now().toString(36).toUpperCase());const cy=dyCyc(u);cy.c.push(d);u.dyc={s:cy.s,c:cy.c};fxDy(u,d,false);sv();
+  return J(r,200,{ok:1,bal:bal(u),tx:u.stx,rd,...dyState(u)})}
+ if(c==='fx'){const cf=fxCfg();
+  if(S[2]==='me'&&m==='GET'){const sl=saleOn();return J(r,200,{mis:fxMis(u),reset:{d:toMid(),w:toMid()+Math.max(0,6-((new Date(wibDay()+'T00:00:00Z').getUTCDay()+6)%7))*864e5},ref:{code:refCode(u),n:u.rn||0,used:!!u.rb,cfg:cf.ref},badges:fxBdg(u),ttl:u.ttl||'',streak:dyStreak(u),best:dyBest(u),rd:cf.rd,sale:sl?{pct:sl.pct,end:sl.end,label:sl.label}:null,ev:fxEvI(),race:cf.race})}
+  if(S[2]==='ev'&&m==='POST'){const k=String(b.k);if(!['chat','bh'].includes(k))return ER(r,400,'Event tidak valid');const now=Date.now();if(now-(u._fe||0)<1500)return J(r,200,{ok:1,skip:1});u._fe=now;fxEv(u,k,1);return J(r,200,{ok:1})}
+  if(S[2]==='claim'&&m==='POST'){const x=fxMis(u).find(q=>q.id===String(b.id));if(!x)return ER(r,404,'Misi tidak ada');if(x.cl)return ER(r,429,'Misi ini sudah diklaim');if(x.p<x.g)return ER(r,400,'Misi belum selesai');
+   const mm=fxM(u);(x.per==='d'?mm.cd:mm.cw).push(x.id);u.fxm=(u.fxm||0)+1;let msg;
+   if(x.r==='sal'){credit(u,x.a,'Misi: '+x.n,'MS'+Date.now().toString(36).toUpperCase());msg='+Rp'+x.a.toLocaleString('id-ID')+' masuk saldo'}else{gmOf(u).c+=x.a;msg='+'+x.a.toLocaleString('id-ID')+' koin Brohaven'}
+   sv();return J(r,200,{ok:1,msg,bal:bal(u),tx:u.stx,gm:gmPub(u),mis:fxMis(u),badges:fxBdg(u)})}
+  if(S[2]==='vch'&&m==='POST'){const k=(u._vh=(u._vh||0)+1);if(hits['v'+u.id]>8)return ER(r,429,'Terlalu sering mencoba, tunggu semenit');hits['v'+u.id]=(hits['v'+u.id]||0)+1;
+   const code=String(b.code||'').trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'').slice(0,24),v=cf.vch[code];if(!v||!v.on)return ER(r,404,'Kode tidak valid');
+   if(v.exp&&v.exp<Date.now())return ER(r,410,'Kode sudah kedaluwarsa');if(v.max&&(v.n||0)>=v.max)return ER(r,410,'Kuota kode habis');v.by=v.by||{};if(v.by[u.id])return ER(r,409,'Kamu sudah memakai kode ini');
+   v.by[u.id]=1;v.n=(v.n||0)+1;let msg;if(v.k==='sal'){credit(u,v.a,'Voucher '+code,'VC'+Date.now().toString(36).toUpperCase());msg='+Rp'+v.a.toLocaleString('id-ID')+' masuk saldo'}else{gmOf(u).c+=v.a;msg='+'+v.a.toLocaleString('id-ID')+' koin Brohaven'}
+   sv();return J(r,200,{ok:1,msg,bal:bal(u),tx:u.stx,gm:gmPub(u)})}
+  if(S[2]==='ref'&&m==='POST'){const rf=cf.ref;if(!rf.on)return ER(r,403,'Program ajak teman sedang tidak aktif');if(u.rb)return ER(r,409,'Kamu sudah pernah memakai kode ajakan');
+   const code=String(b.code||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,12),inv=db.users[String((db.rix||{})[code])];if(!inv||inv.id===u.id)return ER(r,404,'Kode ajakan tidak ditemukan');if((inv.rn||0)>=rf.max)return ER(r,410,'Kode ini sudah mencapai batas ajakan');
+   u.rb=inv.id;inv.rn=(inv.rn||0)+1;if(rf.b>0)credit(u,rf.b,'Bonus kode ajakan','RF'+Date.now().toString(36).toUpperCase());if(rf.a>0)credit(inv,rf.a,'Bonus ajak teman: '+u.name,'RF'+Date.now().toString(36).toUpperCase());sv();
+   return J(r,200,{ok:1,msg:'Kode diterima! +Rp'+rf.b.toLocaleString('id-ID')+' masuk saldo',bal:bal(u),tx:u.stx})}
+  if(S[2]==='title'&&m==='POST'){const id=String(b.id||'');if(!id){u.ttl='';sv();return J(r,200,{ok:1,ttl:''})}const bd=BADGES.find(x=>x[0]===id);if(!bd||!bd[3](u))return ER(r,400,'Lencana belum kamu dapatkan');u.ttl=id;sv();return J(r,200,{ok:1,ttl:id})}
+  if(S[2]==='lb'&&m==='GET'){const k=['streak','coin','race'].includes(S[3])?S[3]:'streak',arr=fxLb(k),wk=fxWk(),i=arr.findIndex(x=>x.id===u.id);return J(r,200,{k,top:arr.slice(0,10).map(x=>({n:x.n,v:x.v,t:x.t,me:x.id===u.id})),me:i>=0?{rank:i+1,v:arr[i].v}:null,wk})}
+  return ER(r,404,'Tidak ditemukan')}
+ if(c==='gm'&&S[2]==='race'&&m==='POST'){const cf=fxCfg().race;if(!cf.on)return ER(r,403,'Balapan sedang ditutup');const oc=gClients().find(o=>o.u.id===u.id);if(!oc)return ER(r,400,'Masuk dulu ke Brohaven');const g=gmOf(u),now=Date.now();
+  if(S[3]==='start'){if(oc.g.rm!=='w'||gDist(oc,RACE_ST[0],RACE_ST[1])>28)return ER(r,400,'Dekati garis start dulu');oc.g.rs=now;return J(r,200,{ok:1,pts:RACE_PTS})}
+  if(S[3]==='finish'){const el=(now-(oc.g.rs||0))/1e3;if(!oc.g.rs||el>600)return ER(r,400,'Balapan belum dimulai');if(gDist(oc,RACE_ST[0],RACE_ST[1])>30)return ER(r,400,'Kamu belum sampai garis finis');oc.g.rs=0;
+   if(el<12)return ER(r,400,'Waktu tidak masuk akal');const t=Math.round(el*10)/10,wk=fxWk();fxEv(u,'race',1);if(!g.rb||t<g.rb)g.rb=t;if(!g.rw||g.rw.w!==wk)g.rw={w:wk,t:0};if(!g.rw.t||t<g.rw.t)g.rw.t=t;
+   const dk=wibDay();if(!g.rr||g.rr.d!==dk)g.rr={d:dk,n:0};let pay=0;if(t<=cf.t&&g.rr.n<5){g.rr.n++;pay=gGive(oc,cf.c,'Juara balap! '+t+' dtk')}sv();return J(r,200,{ok:1,t,best:g.rb,pay,target:cf.t,gm:gmPub(u)})}}
  if(c==='gm'){const cf=GMC();if(!cf.on&&!isRoot(u))return ER(r,403,'Brohaven sedang ditutup Owner');const g=gmOf(u),sub=S[2];
   if(sub==='world'&&m==='GET'){r.writeHead(200,{'content-type':'application/json','cache-control':'public,max-age=3600','access-control-allow-origin':'*'});return r.end(GWJ)}
-  if(sub==='me'&&m==='GET')return J(r,200,{on:!!cf.on,gm:gmPub(u),pr:GPR,veh:GVEH,mul:cf.mul||1,top:gTop(cf),sal:bal(u)});
+  if(sub==='me'&&m==='GET')return J(r,200,{on:!!cf.on,gm:gmPub(u),pr:GPR,veh:GVEH,mul:cf.mul||1,top:gTop(cf),sal:bal(u),ev:fxEvI(),race:{pts:RACE_PTS,st:RACE_ST,cfg:fxCfg().race},mis:fxMis(u)});
   if(sub==='top'&&m==='POST'){const L=gTop(cf),i=Math.floor(+b.i),p=L[i];if(!p)return ER(r,400,'Paket tidak ada');if(bal(u)<p[1])return ER(r,400,'Saldo Astra tidak cukup. Butuh Rp'+p[1].toLocaleString('id-ID')+', saldomu Rp'+bal(u).toLocaleString('id-ID'));if(g.c+p[0]>1e9)return ER(r,400,'Koin terlalu banyak');const ref='GM'+Date.now().toString(36).toUpperCase()+cr.randomBytes(2).toString('hex').toUpperCase();u.sal=bal(u)-p[1];addTx(u,-p[1],'Top up '+p[0]+' koin Brohaven',ref);g.c+=p[0];sv();return J(r,200,{ok:1,gm:gmPub(u),sal:u.sal,bal:u.sal,tx:u.stx,add:p[0],ref})}
   if(sub==='av'&&m==='POST'){const a=b.av||{},o={};for(const k in GMX){const v=Math.floor(+a[k]);if(!(v>=0&&v<GMX[k]))return ER(r,400,'Pilihan tidak valid');if(GPR[k]&&GPR[k][v]>0&&!g.own.includes(k+v))return ER(r,403,'Item belum kamu beli');o[k]=v}g.av=o;sv();gClients().forEach(x=>x.g.known.delete(u.id));return J(r,200,{ok:1,gm:gmPub(u)})}
   if(sub==='buy'&&m==='POST'){const k=String(b.k),v=b.v;let pr,key;if(k==='veh'){if(!GVEH[v])return ER(r,400,'Kendaraan tidak ada');if(g.veh.includes(v))return ER(r,400,'Sudah kamu miliki');pr=GVEH[v].p;key=v}
@@ -469,11 +550,11 @@ function h(q,r,b){
   if(sub==='veh'&&m==='POST'){const v=String(b.v),cc=Math.floor(+b.c);if(!g.veh.includes(v))return ER(r,403,'Kendaraan belum kamu miliki');g.vh=v;if(cc>=0&&cc<8)g.vc=cc;sv();gClients().forEach(x=>x.g.known.delete(u.id));return J(r,200,{ok:1,gm:gmPub(u)})}
   if(sub==='job'&&m==='POST'){const j=String(b.j||'');if(j&&!['kurir','polisi','pemadam'].includes(j))return ER(r,400,'Pekerjaan tidak ada');g.job=j;sv();gClients().forEach(x=>{x.g.known.delete(u.id);if(x.u.id===u.id){x.g.ord=null;if(j==='kurir'||j==='polisi')gOrder(x);else gsend(x,{t:'ord',o:null})}});return J(r,200,{ok:1,gm:gmPub(u)})}
   return ER(r,404,'Tidak ditemukan')}
- if(c==='daily'&&m==='GET')return J(r,200,dyState(u));
+ if(c==='daily'&&m==='GET')return J(r,200,{...dyState(u),rd:fxCfg().rd,ev:fxEvI()});
  if(c==='daily'&&S[2]==='claim'&&m==='POST'){const cf=dyCfg();if(!cf.on)return ER(r,403,'Bonus harian sedang tidak aktif');const t=wibDay(),cy=dyCyc(u);if(cy.c.includes(t))return ER(r,429,'Bonus hari ini sudah diklaim. Reset tengah malam WIB');
   const i=dyDiff(cy.s,t),amt=cf.amts[i]||0,perfect=i===6&&[0,1,2,3,4,5].every(k=>cy.c.includes(dyAdd(cy.s,k)));
   if(amt>0){bal(u);u.sal=bal(u)+amt;addTx(u,amt,'Bonus login harian hari ke-'+(i+1),'DL'+Date.now().toString(36).toUpperCase())}
-  cy.c.push(t);u.dyc={s:cy.s,c:cy.c};u.dyl={d:t,st:cy.c.length};let pz='';
+  cy.c.push(t);u.dyc={s:cy.s,c:cy.c};fxDy(u,t,true);u.dyl={d:t,st:cy.c.length};let pz='';
   if(i===6&&cf.prize.on){if(!perfect)pz='Hadiah GO ASTRA Mini hanya untuk yang login 7 hari penuh tanpa bolong. Coba lagi di putaran berikutnya!';else if(isRoot(u))pz='Premium tidak berlaku untuk Owner (sudah unlimited)';else{const ms=dyMs(cf.prize),cur=planOf(u);if(cur==='free'||!PTAB[cur])u.pl={id:'go25',exp:Date.now()+ms};else{const ex=pexpOf(u);if(ex)u.pl.exp=ex+ms}pz='Selamat! Kamu dapat '+PTAB.go25.n+' selama '+cf.prize.val+' '+cf.prize.unit;alog(u,'bonus harian','hadiah '+PTAB.go25.n+' '+cf.prize.val+' '+cf.prize.unit)}}
   sv();return J(r,200,{ok:1,add:amt,pz,bal:bal(u),tx:u.stx,pl:plInfo(u),...dyState(u)})}
  if(c==='spin'&&m==='GET')return J(r,200,{...spView(false),...spState(u),hist:spStat().log.slice(0,8)});
@@ -636,6 +717,18 @@ function h(q,r,b){
    if(b.act==='kick'){const id=String(b.id);GM.kick[id]=Date.now()+3e5;clients.forEach(c=>{if(c.r==='game'&&c.u.id===id){wsend(c,{t:'off',b:'Kamu dikeluarkan dari Brohaven oleh Owner'});try{c.sock.end()}catch{}}});alog(u,'brohaven','kick '+id)}
    if(b.act==='give'){const t=db.users[String(b.id)];if(!t)return ER(r,404,'Pengguna tidak ada');const a2=Math.max(-1e6,Math.min(1e6,Math.floor(+b.a)||0)),g2=gmOf(t);g2.c=Math.max(0,g2.c+a2);sv();clients.forEach(c=>{if(c.r==='game'&&c.u.id===t.id)gsend(c,{t:'pay',a:a2,c:g2.c,w:a2>=0?'Hadiah dari Owner':'Koin dikurangi Owner'})});alog(u,'brohaven','koin '+a2+' ke '+t.id)}
    return J(r,200,{cfg:{on:!!cf.on,mul:cf.mul||1,top:gTop(cf)},online:gClients().map(c=>({id:c.u.id,name:c.u.name,rm:c.g.rm,x:Math.round(c.g.x),z:Math.round(c.g.z),job:gmOf(c.u).job,c:gmOf(c.u).c,v:c.g.v})),fires:GM.fires.length})}
+  if(a==='fx'){if(!isRoot(u))return ER(r,403,'Hanya Owner utama');const cf=fxCfg(),act=b.act,N=(v,lo,hi)=>Math.max(lo,Math.min(hi,Math.floor(+v)||0));
+   const out=()=>({mis:fxDefs(),ev:{...cf.ev,now:fxEvI()},sale:{...cf.sale,live:!!saleOn()},ref:cf.ref,rd:cf.rd,race:cf.race,vch:Object.entries(cf.vch).map(([k,v])=>({code:k,k:v.k,a:v.a,max:v.max||0,n:v.n||0,exp:v.exp||0,on:v.on?1:0}))});
+   if(act==='mis'){for(const q of(Array.isArray(b.mis)?b.mis:[])){const d=FXMIS.find(x=>x.id===q.id);if(!d)continue;cf.mo[d.id]={g:N(q.g,1,1e6),a:N(q.a,0,1e6),on:q.on===0?0:1,r:q.r==='sal'?'sal':'coin'}}alog(u,'misi','ubah misi')}
+   else if(act==='ev'){const e=b.ev||{};cf.ev={on:e.on?1:0,mult:N(e.mult,1,10)||2,wk:e.wk?1:0,until:e.hrs>0?Date.now()+N(e.hrs,1,720)*36e5:(e.keep?cf.ev.until:0),label:String(e.label||'Coins Ganda').slice(0,30)};alog(u,'event brohaven',(cf.ev.on?'aktif x':'mati x')+cf.ev.mult)}
+   else if(act==='sale'){const s=b.sale||{},mins=N(s.mins,0,43200);cf.sale={on:s.on?1:0,pct:N(s.pct,1,90)||20,start:Date.now(),end:s.on?(mins>0?Date.now()+mins*6e4:cf.sale.end):0,label:String(s.label||'Flash Sale').slice(0,30)};if(cf.sale.on&&!(cf.sale.end>Date.now()))return ER(r,400,'Isi durasi flash sale (menit)');alog(u,'flash sale',cf.sale.on?'-'+cf.sale.pct+'% '+mins+' menit':'mati')}
+   else if(act==='ref'){const x=b.ref||{};cf.ref={on:x.on?1:0,a:N(x.a,0,1e5),b:N(x.b,0,1e5),max:N(x.max,1,500)};alog(u,'ajak teman','ubah')}
+   else if(act==='rd'){const x=b.rd||{};cf.rd={on:x.on?1:0,p:N(x.p,0,1e5)};alog(u,'tebus hari','Rp'+cf.rd.p)}
+   else if(act==='race'){const x=b.race||{};cf.race={on:x.on?1:0,t:N(x.t,15,600),c:N(x.c,0,1e5)};alog(u,'balap','ubah')}
+   else if(act==='vch'){const x=b.v||{},code=String(x.code||'').trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'').slice(0,24);if(code.length<3)return ER(r,400,'Kode minimal 3 karakter (huruf/angka)');if(!['sal','coin'].includes(x.k))return ER(r,400,'Jenis hadiah tidak valid');const am=N(x.a,1,1e6);if(!(am>=1))return ER(r,400,'Nominal 1 - 1.000.000');
+    const old=cf.vch[code]||{};cf.vch[code]={k:x.k,a:am,max:N(x.max,0,1e6),exp:N(x.days,0,3650)>0?Date.now()+N(x.days,0,3650)*864e5:0,on:x.on===0?0:1,n:old.n||0,by:old.by||{}};alog(u,'voucher',code+' '+x.k+' '+am)}
+   else if(act==='vchdel'){delete cf.vch[String(b.code||'').toUpperCase()];alog(u,'voucher','hapus '+b.code)}
+   sv();return J(r,200,out())}
   if(a==='daily'){if(!isRoot(u))return ER(r,403,'Hanya Owner utama');const cf=dyCfg();
    if(b.act==='set'){const am=(Array.isArray(b.amts)?b.amts:[]).slice(0,7).map(x=>Math.floor(+x));if(am.length!==7||am.some(x=>!(x>=0&&x<=1e6)))return ER(r,400,'Nominal tiap hari harus 0 - 1.000.000');const pz=b.prize||{},un=['menit','jam','hari'].includes(pz.unit)?pz.unit:'hari',mx={menit:525600,jam:8760,hari:365}[un],val=Math.floor(+pz.val);if(pz.on&&!(val>=1&&val<=mx))return ER(r,400,'Durasi hadiah harus 1 - '+mx+' '+un);
     cf.on=b.on?1:0;cf.amts=am;cf.amt=am[0];cf.amt7=am[6];cf.prize={on:pz.on?1:0,unit:un,val:val>=1?Math.min(mx,val):1};sv();alog(u,'bonus harian',(cf.on?'aktif ':'mati ')+am.join('/')+' · hadiah '+(cf.prize.on?cf.prize.val+' '+un:'mati'))}

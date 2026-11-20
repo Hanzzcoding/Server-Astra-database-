@@ -159,6 +159,33 @@ const seen={};
 const isOn=id=>seen[id]&&Date.now()-seen[id]<120000||[...clients].some(c=>c.u.id===id);
 
 const pub=u=>({id:u.id,name:u.name,avatar:u.avatar,status:u.status,role:isRoot(u)?'root':isAdm(u)?'owner':RL.includes(planOf(u))?planOf(u):'free',av:u.avatar?(u.avt||1):0});
+/* ===== KEAMANAN AKUN: passkey (WebAuthn), kode/QR masuk, 2FA TOTP, perangkat ===== */
+const s256=x=>cr.createHash('sha256').update(x).digest(),b64u=b=>Buffer.from(b).toString('base64url'),unb64u=s=>Buffer.from(String(s||''),'base64url');
+const cborDec=buf=>{let o=0;const rd=()=>{const ib=buf[o++],mt=ib>>5,ai=ib&31;let n;if(ai<24)n=ai;else if(ai===24)n=buf[o++];else if(ai===25){n=buf.readUInt16BE(o);o+=2}else if(ai===26){n=buf.readUInt32BE(o);o+=4}else if(ai===27){n=Number(buf.readBigUInt64BE(o));o+=8}else throw new Error('cbor');
+ if(mt===0)return n;if(mt===1)return -1-n;if(mt===2){const v=buf.subarray(o,o+n);o+=n;return v}if(mt===3){const v=buf.toString('utf8',o,o+n);o+=n;return v}
+ if(mt===4){const a=[];for(let i=0;i<n;i++)a.push(rd());return a}if(mt===5){const m=new Map();for(let i=0;i<n;i++){const k=rd();m.set(k,rd())}return m}if(mt===7)return ai===20?false:ai===21?true:null;throw new Error('cbor tipe')};return rd()};
+const PKC=new Map();setInterval(()=>{const n=Date.now();for(const[k,v]of PKC)if(n-v.t>3e5)PKC.delete(k)},60000);
+const ipOf=q=>String(q.headers['x-forwarded-for']||'').split(',')[0].trim()||q.socket.remoteAddress||'',orgU=q=>{try{return new URL(q.headers.origin)}catch{return null}},hostOf=q=>{const o=orgU(q);return o?o.host:String(q.headers['x-forwarded-host']||q.headers.host||'localhost').split(',')[0].trim()},rpOf=q=>hostOf(q).replace(/:\d+$/,'').replace(/^\[|\]$/g,'');
+const maskIp=ip=>String(ip).replace(/^::ffff:/,'').replace(/(\d+\.\d+)\.\d+\.\d+$/,'$1.•.•').replace(/(:[0-9a-f]*){3}$/i,':•:•:•');
+const devOf=q=>{const ua=String(q.headers['user-agent']||''),os=/Android/i.test(ua)?'Android':/iPhone|iPad|iPod/i.test(ua)?'iOS':/Windows/i.test(ua)?'Windows':/Mac OS X|Macintosh/i.test(ua)?'macOS':/Linux|X11/i.test(ua)?'Linux':'Perangkat',br=/SamsungBrowser/i.test(ua)?'Samsung Internet':/Edg\//i.test(ua)?'Edge':/OPR\/|Opera/i.test(ua)?'Opera':/Firefox/i.test(ua)?'Firefox':/Chrome|CriOS/i.test(ua)?'Chrome':/Safari/i.test(ua)?'Safari':'Browser';return br+' di '+os};
+const mkTok=(u,q,m)=>{const t=cr.randomBytes(24).toString('hex'),d=devOf(q),ip=ipOf(q),n=Date.now();db.tok[t]={id:u.id,ep:u.ep,c:n,ls:n,d,ip,m};const lg=u.lg||(u.lg=[]);lg.unshift({t:n,m,d,ip:maskIp(ip)});if(lg.length>20)lg.length=20;
+ const dv=u.dv||(u.dv=[]);if(dv.length&&!dv.includes(d)){(u.inb=u.inb||[]).push({t:n,x:'🔐 Login baru dari '+d+' ('+({password:'password',passkey:'passkey',qr:'kode QR'}[m]||m)+'). Bukan kamu? Buka Keamanan Akun lalu keluarkan perangkat itu.'});if(u.inb.length>20)u.inb.shift()}if(!dv.includes(d)){dv.push(d);if(dv.length>12)dv.shift()}return t};
+const SECF=()=>db.sec||(db.sec={qr:1,pk:1,maxq:1440});
+/* WebAuthn */
+const pkOrigin=(o,rp)=>{try{const u=new URL(o);return u.hostname===rp&&(u.protocol==='https:'||rp==='localhost'||rp==='127.0.0.1')}catch{return false}};
+const pkClient=(b64,type,rp)=>{const cd=JSON.parse(unb64u(b64).toString('utf8'));if(cd.type!==type)throw new Error('Jenis permintaan passkey salah');const c=PKC.get(cd.challenge);if(!c||c.k!==type)throw new Error('Tantangan passkey kedaluwarsa, coba lagi');PKC.delete(cd.challenge);if(!pkOrigin(cd.origin,rp))throw new Error('Asal situs tidak cocok dengan passkey');return{c,cd,raw:unb64u(b64)}};
+const pkAuth=ad=>{if(ad.length<37)throw new Error('authData rusak');const o={rp:ad.subarray(0,32),fl:ad[32],cnt:ad.readUInt32BE(33)};if(o.fl&0x40){const il=ad.readUInt16BE(53);o.aa=ad.subarray(37,53);o.id=ad.subarray(55,55+il);o.pk=cborDec(ad.subarray(55+il))}return o};
+const pkKey=m=>{const kty=m.get(1),alg=m.get(3);let jwk;if(kty===2&&alg===-7){if(m.get(-1)!==1)throw new Error('Kurva passkey tidak didukung');jwk={kty:'EC',crv:'P-256',x:b64u(m.get(-2)),y:b64u(m.get(-3))}}else if(kty===3&&alg===-257)jwk={kty:'RSA',n:b64u(m.get(-1)),e:b64u(m.get(-2))};else if(kty===1&&alg===-8)jwk={kty:'OKP',crv:'Ed25519',x:b64u(m.get(-2))};else throw new Error('Jenis kunci passkey belum didukung');
+ return{alg,spki:cr.createPublicKey({key:jwk,format:'jwk'}).export({type:'spki',format:'der'}).toString('base64')}};
+const pkVerify=(pk,data,sig)=>{const key=cr.createPublicKey({key:Buffer.from(pk.pub,'base64'),format:'der',type:'spki'});return pk.alg===-8?cr.verify(null,data,key,sig):cr.verify('sha256',data,key,sig)};
+const pkChal=(k,uid)=>{const ch=b64u(cr.randomBytes(32));PKC.set(ch,{t:Date.now(),k,uid});return ch};
+/* TOTP */
+const B32='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',b32e=buf=>{let bits=0,val=0,o='';for(const x of buf){val=(val<<8)|x;bits+=8;while(bits>=5){o+=B32[(val>>>(bits-5))&31];bits-=5}}if(bits>0)o+=B32[(val<<(5-bits))&31];return o},b32d=s=>{let bits=0,val=0;const o=[];for(const ch of String(s).toUpperCase().replace(/[^A-Z2-7]/g,'')){val=(val<<5)|B32.indexOf(ch);bits+=5;if(bits>=8){o.push((val>>>(bits-8))&255);bits-=8}}return Buffer.from(o)};
+const totpAt=(sec,c)=>{const b=Buffer.alloc(8);b.writeBigUInt64BE(BigInt(c));const h=cr.createHmac('sha1',b32d(sec)).update(b).digest(),o=h[19]&15;return String((((h[o]&0x7f)<<24)|(h[o+1]<<16)|(h[o+2]<<8)|h[o+3])%1e6).padStart(6,'0')};
+const t2chk=(u,code,sec)=>{const c0=Math.floor(Date.now()/3e4),s=sec||(u.t2&&u.t2.s);if(!/^\d{6}$/.test(code)||!s)return false;for(const d of[0,-1,1]){const c=c0+d;if(totpAt(s,c)===code&&(sec||c>(u.t2.lc||0))){if(!sec)u.t2.lc=c;return true}}return false};
+const t2bk=(u,code)=>{const h=cr.createHash('sha256').update(String(code).toUpperCase().replace(/[^A-Z0-9]/g,'')).digest('hex'),i=((u.t2||{}).bk||[]).indexOf(h);if(i<0)return false;u.t2.bk.splice(i,1);return true};
+const QA='ABCDEFGHJKMNPQRSTUVWXYZ23456789',qNorm=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'').replace(/^ASTRA/,'').slice(0,12),qHash=s=>cr.createHash('sha256').update('qr:'+s).digest('hex');
+const qGen=()=>{let s='';const b=cr.randomBytes(12);for(let i=0;i<12;i++)s+=QA[b[i]%QA.length];return s};
 const me=u=>({...pub(u),adm:isRoot(u)?'root':u.adm||'',email:u.email,bg:u.bg,wall:u.wall,fx:u.fx,sal:bal(u),data:dat(u)});
 
 /* ===== VIDEO WALLPAPER (kartu Saldo & Premium) – diatur Owner utama, tampil ke semua pengguna ===== */
@@ -521,6 +548,18 @@ function h(q,r,b){
  const[p,qs]=q.url.split('?'),P=new URLSearchParams(qs||''),S=p.split('/').filter(Boolean),c=S[1],m=q.method;
  if(S[0]!=='api')return ER(r,404,'Tidak ditemukan');
  if(c==='ping')return J(r,200,{ok:1,v:11});
+ /* ===== rute login tanpa token: passkey, kode QR ===== */
+ if(c==='passkey'&&S[2]==='login'&&m==='POST'){const sf=SECF();if(!sf.pk)return ER(r,403,'Login passkey sedang dimatikan Owner');const rp=rpOf(q);
+  if(S[3]==='begin'){const em=String(b.email||'').trim().toLowerCase(),tu=db.users[db.mail[em]],al=tu&&tu.pk?tu.pk.map(x=>x.id):[];return J(r,200,{ch:pkChal('webauthn.get',''),rp,allow:al})}
+  if(S[3]==='finish'){const ip=ipOf(q);hits['p'+ip]=(hits['p'+ip]||0)+1;if(hits['p'+ip]>20)return ER(r,429,'Terlalu banyak percobaan, tunggu semenit');
+   try{const id=String(b.id||''),uid=db.pki&&db.pki[id],u=db.users[uid],pk=u&&(u.pk||[]).find(x=>x.id===id);if(!pk)throw new Error('Passkey ini tidak terdaftar di server');
+    const rs=b.response||{},cl=pkClient(rs.clientDataJSON,'webauthn.get',rp),ad=unb64u(rs.authenticatorData),a=pkAuth(ad);if(!a.rp.equals(s256(rp)))throw new Error('Passkey bukan untuk situs ini');if(!(a.fl&1))throw new Error('Passkey tidak mengonfirmasi kehadiranmu');
+    if(!pkVerify(pk,Buffer.concat([ad,s256(cl.raw)]),unb64u(rs.signature)))throw new Error('Tanda tangan passkey tidak valid');
+    if((a.cnt||pk.cnt)&&a.cnt<=pk.cnt)throw new Error('Passkey ditolak (penghitung mundur, kemungkinan duplikat)');pk.cnt=a.cnt;pk.last=Date.now();const t=mkTok(u,q,'passkey');sv();return J(r,200,{token:t,user:me(u),data:dat(u)})}
+   catch(e){return ER(r,401,e.message||'Login passkey gagal')}}}
+ if(c==='qrlogin'&&S[2]==='use'&&m==='POST'){const sf=SECF();if(!sf.qr)return ER(r,403,'Login dengan QR/kode sedang dimatikan Owner');const ip=ipOf(q);hits['q'+ip]=(hits['q'+ip]||0)+1;if(hits['q'+ip]>10)return ER(r,429,'Terlalu banyak percobaan, tunggu semenit');
+  const code=qNorm(b.code);if(code.length!==12)return ER(r,400,'Kode harus 12 karakter (contoh ABCD-EFGH-JKMN)');const h=qHash(code),e=(db.qc||{})[h];if(!e||e.exp<Date.now())return ER(r,401,'Kode salah atau sudah kedaluwarsa');const u=db.users[e.id];if(!u)return ER(r,401,'Akun tidak ditemukan');
+  delete db.qc[h];const t=mkTok(u,q,'qr');sv();return J(r,200,{token:t,user:me(u),data:dat(u)})}
  if(c==='register'||c==='login'){
   const em=String(b.email||'').trim().toLowerCase(),pw=String(b.pass||'');
   if(!/^\S+@\S+\.\S+$/.test(em)||pw.length<6||pw.length>200)return ER(r,400,'Email atau password tidak valid (password minimal 6 karakter)');
@@ -531,7 +570,8 @@ function h(q,r,b){
    if(Object.keys(db.users).length>=MAXU)return ER(r,503,'Server penuh, pendaftaran ditutup sementara');
    const salt=cr.randomBytes(16).toString('hex');u=db.users[db.next]={id:String(db.next),email:em,name:em.split('@')[0].slice(0,24),salt,ph:ph(pw,salt),avatar:'',bg:'',wall:'',fx:'',status:'',fr:[],data:{},ep:0,cr:Date.now()};db.mail[em]=db.next++;
   }else if(!u||ph(pw,u.salt)!==u.ph)return ER(r,401,'Email atau password salah');
-  const t=cr.randomBytes(24).toString('hex');db.tok[t]={id:u.id,ep:u.ep,c:Date.now()};sv();return J(r,200,{token:t,user:me(u),data:dat(u)});
+  if(c==='login'&&u.t2&&u.t2.on){const otp=String(b.otp||'').replace(/\s/g,'');if(!otp)return J(r,428,{e:'Masukkan kode verifikasi 6 digit dari aplikasi authenticator (atau kode cadangan).',need2fa:1});hits['o'+u.id]=(hits['o'+u.id]||0)+1;if(hits['o'+u.id]>8)return ER(r,429,'Terlalu banyak percobaan kode, tunggu semenit');if(!(t2chk(u,otp)||t2bk(u,otp)))return ER(r,401,'Kode verifikasi salah atau sudah dipakai')}
+  const t=mkTok(u,q,'password');sv();return J(r,200,{token:t,user:me(u),data:dat(u)});
  }
  if(c==='avatar'&&m==='GET'){const x=db.users[S[2]],mm=x&&x.avatar&&/^data:(image\/[\w.+-]+);base64,(.+)$/.exec(x.avatar);if(!mm)return ER(r,404,'Tidak ada foto');r.writeHead(200,{'content-type':mm[1],'cache-control':'public,max-age=86400','access-control-allow-origin':'*'});return r.end(Buffer.from(mm[2],'base64'))}
 
@@ -548,6 +588,7 @@ function h(q,r,b){
   H['content-length']=e-a+1;r.writeHead(code,H);const rs=fs.createReadStream(wpPath(fid),{start:a,end:e});rs.on('error',()=>r.destroy());r.on('close',()=>rs.destroy());rs.pipe(r);return}
  const k=db.tok[(q.headers.authorization||'').slice(7)],u=k&&db.users[k.id];
  if(!u||k.ep!==u.ep)return ER(r,401,'Sesi habis, silakan masuk lagi');
+ if(Date.now()-(k.ls||0)>6e4)k.ls=Date.now();
  if(isAB(u)&&!(c==='hb'||c==='me'||c==='ping'||c==='logoutall'||(c==='dm'&&S[2]===ownId()&&S.length<=3)))return J(r,403,{e:'Akunmu di-BAN',ab:banInfo(u)});
   seen[u.id]=Date.now();
  if(db.maint&&!isAdm(u)&&c!=='hb')return ER(r,503,'Server sedang pemeliharaan: '+db.maint);
@@ -617,6 +658,27 @@ function h(q,r,b){
   sv();fast();return J(r,200,{ok:1,idx:ch.i,prize:{id:p.id,t:p.t,v:p.v,l:lab},msg,dc:dcOf(u),bal:bal(u),tx:u.stx||[],pl:plInfo(u),next:toMid()})}
  if(c==='hb')return J(r,200,{ok:1,maint:db.maint||'',pl:plInfo(u),adm:isRoot(u)?'root':u.adm||'',pr:ptab(),payv:db.payv||0,wpv:db.wpv||0,sp:spState(u),bal:bal(u),tx:u.stx||[],live:lpub()||null,gift:u.gift||null,ban:isBanned(u)?(u.bu||1):0,ab:banInfo(u)});
  if(c==='gift'&&S[2]==='ack'&&m==='POST'){u.gift=null;sv();return J(r,200,{ok:1})}
+ /* ===== rute keamanan akun (butuh login) ===== */
+ if(c==='security'&&m==='GET'){const cur=(q.headers.authorization||'').slice(7),ss=Object.entries(db.tok).filter(([t,k])=>k.id===u.id&&k.ep===u.ep).map(([t,k])=>({sid:s256(t).toString('hex').slice(0,12),d:k.d||'Perangkat lama',ip:maskIp(k.ip||''),m:k.m||'password',c:k.c,ls:k.ls||k.c,cur:t===cur})).sort((a,b2)=>b2.ls-a.ls).slice(0,20),now=Date.now();
+  return J(r,200,{email:u.email,pk:(u.pk||[]).map(x=>({id:x.id,n:x.n,t:x.t,last:x.last||0})),t2:!!(u.t2&&u.t2.on),bk:u.t2&&u.t2.bk?u.t2.bk.length:0,qr:Object.entries(db.qc||{}).filter(([h,e])=>e.id===u.id&&e.exp>now).map(([h,e])=>({h:h.slice(0,12),exp:e.exp,d:e.d})),ss,lg:(u.lg||[]).slice(0,12),sf:SECF(),host:rpOf(q)})}
+ if(c==='passkey'&&m==='POST'){const sf=SECF();if(!sf.pk)return ER(r,403,'Passkey sedang dimatikan Owner');const rp=rpOf(q);
+  if(S[2]==='reg'&&S[3]==='begin'){if((u.pk||[]).length>=8)return ER(r,400,'Maksimal 8 passkey per akun');return J(r,200,{ch:pkChal('webauthn.create',u.id),rp,uid:b64u(Buffer.from('astra:'+u.id)),email:u.email,name:u.name,ex:(u.pk||[]).map(x=>x.id)})}
+  if(S[2]==='reg'&&S[3]==='finish'){try{const rs=b.response||{},cl=pkClient(rs.clientDataJSON,'webauthn.create',rp);if(cl.c.uid!==u.id)throw new Error('Tantangan bukan untuk akun ini');const att=cborDec(unb64u(rs.attestationObject)),ad=att.get('authData'),a=pkAuth(ad);if(!a.rp.equals(s256(rp)))throw new Error('Passkey bukan untuk situs ini');if(!(a.fl&1)||!a.id)throw new Error('Data passkey tidak lengkap');
+    const k=pkKey(a.pk),id=b64u(a.id);if(db.pki&&db.pki[id])throw new Error('Passkey ini sudah terdaftar');db.pki=db.pki||{};(u.pk=u.pk||[]).push({id,pub:k.spki,alg:k.alg,cnt:a.cnt,n:String(b.name||'').trim().slice(0,30)||devOf(q),t:Date.now(),last:0});db.pki[id]=u.id;sv();return J(r,200,{ok:1,id})}catch(e){return ER(r,400,e.message||'Gagal menyimpan passkey')}}
+  if(S[2]==='del'){const i=(u.pk||[]).findIndex(x=>x.id===String(b.id));if(i<0)return ER(r,404,'Passkey tidak ditemukan');delete db.pki[u.pk[i].id];u.pk.splice(i,1);sv();return J(r,200,{ok:1})}
+  if(S[2]==='rename'){const p=(u.pk||[]).find(x=>x.id===String(b.id));if(!p)return ER(r,404,'Passkey tidak ditemukan');p.n=String(b.name||'').trim().slice(0,30)||p.n;sv();return J(r,200,{ok:1})}}
+ if(c==='qrlogin'&&m==='POST'&&S[2]!=='use'){const sf=SECF();
+  if(S[2]==='create'){if(!sf.qr)return ER(r,403,'Login QR sedang dimatikan Owner');hits['qc'+u.id]=(hits['qc'+u.id]||0)+1;if(hits['qc'+u.id]>10)return ER(r,429,'Terlalu sering membuat kode, tunggu semenit');db.qc=db.qc||{};const now=Date.now();for(const h in db.qc)if(db.qc[h].exp<now)delete db.qc[h];
+   if(Object.values(db.qc).filter(e=>e.id===u.id).length>=5)return ER(r,400,'Maksimal 5 kode aktif. Hapus yang lama dulu');const mins=Math.max(1,Math.min(sf.maxq||1440,Math.floor(+b.mins)||10)),code=qGen(),pretty=code.replace(/(.{4})(?=.)/g,'$1-');db.qc[qHash(code)]={id:u.id,exp:now+mins*6e4,d:devOf(q)};sv();
+   const proto=orgU(q)?orgU(q).protocol.replace(':',''):String(q.headers['x-forwarded-proto']||'').split(',')[0]||(rpOf(q)==='localhost'||rpOf(q)==='127.0.0.1'?'http':'https');return J(r,200,{code:pretty,url:proto+'://'+hostOf(q)+'/#qr='+code,exp:now+mins*6e4,mins})}
+  if(S[2]==='revoke'){let n=0;for(const h in db.qc)if(db.qc[h].id===u.id&&(!b.h||h.startsWith(String(b.h))))delete db.qc[h],n++;sv();return J(r,200,{ok:1,n})}}
+ if(c==='2fa'&&m==='POST'){
+  if(S[2]==='setup'){if(u.t2&&u.t2.on)return ER(r,400,'2FA sudah aktif');const sec=b32e(cr.randomBytes(20));u.t2tmp=sec;sv();return J(r,200,{secret:sec.replace(/(.{4})/g,'$1 ').trim(),uri:'otpauth://totp/ASTRA%20AI:'+encodeURIComponent(u.email)+'?secret='+sec+'&issuer=ASTRA%20AI&digits=6&period=30'})}
+  if(S[2]==='enable'){if(!u.t2tmp)return ER(r,400,'Mulai dari menu Aktifkan 2FA dulu');if(!t2chk(u,String(b.code||'').replace(/\s/g,''),u.t2tmp))return ER(r,401,'Kode salah, cek jam HP dan coba lagi');const codes=[];for(let i=0;i<8;i++){let s='';const rb=cr.randomBytes(10);for(let j=0;j<10;j++)s+=QA[rb[j]%QA.length];codes.push(s.slice(0,5)+'-'+s.slice(5))}
+   u.t2={s:u.t2tmp,on:1,lc:Math.floor(Date.now()/3e4),bk:codes.map(x=>cr.createHash('sha256').update(x.replace('-','')).digest('hex'))};delete u.t2tmp;sv();return J(r,200,{ok:1,codes})}
+  if(S[2]==='disable'){if(!(u.t2&&u.t2.on))return ER(r,400,'2FA belum aktif');if(ph(String(b.pass||''),u.salt)!==u.ph)return ER(r,403,'Password salah');const cd=String(b.code||'').replace(/\s/g,'');if(!(t2chk(u,cd)||t2bk(u,cd)))return ER(r,401,'Kode verifikasi salah');delete u.t2;sv();return J(r,200,{ok:1})}
+  if(S[2]==='codes'){if(!(u.t2&&u.t2.on))return ER(r,400,'2FA belum aktif');if(!t2chk(u,String(b.code||'').replace(/\s/g,'')))return ER(r,401,'Kode verifikasi salah');const codes=[];for(let i=0;i<8;i++){let s='';const rb=cr.randomBytes(10);for(let j=0;j<10;j++)s+=QA[rb[j]%QA.length];codes.push(s.slice(0,5)+'-'+s.slice(5))}u.t2.bk=codes.map(x=>cr.createHash('sha256').update(x.replace('-','')).digest('hex'));sv();return J(r,200,{ok:1,codes})}}
+ if(c==='session'&&S[2]==='revoke'&&m==='POST'){const sid=String(b.sid||'');let n=0;for(const t in db.tok){const k=db.tok[t];if(k.id===u.id&&s256(t).toString('hex').slice(0,12)===sid){if(t===(q.headers.authorization||'').slice(7))return ER(r,400,'Ini perangkat yang sedang kamu pakai. Gunakan Keluar biasa');delete db.tok[t];n++}}sv();return J(r,200,{ok:1,n})}
  if(c==='me')return J(r,200,me(u));
  /* ===== LIVE ===== */
  if(c==='live'){
@@ -779,6 +841,8 @@ function h(q,r,b){
    if(act==='notif'){const t2=String(b.text||'').trim().slice(0,200),to=String(b.to||'').trim();if(!t2)return ER(r,400,'Isi pesan dulu');const tu=db.users[to];if(!tu)return ER(r,404,'ID pengguna tidak ditemukan');(tu.inb=tu.inb||[]).push({t:Date.now(),x:t2});if(tu.inb.length>20)tu.inb.shift();sv();alog(u,'notifikasi pribadi',tu.name+': '+t2.slice(0,50));return J(r,200,{ok:1,to:tu.name})}
    if(act==='resetlb'){for(const x of Object.values(db.users)){if(x.gm){delete x.gm.we;delete x.gm.rw}}for(const k in LBC)delete LBC[k];sv();alog(u,'reset peringkat mingguan','');return J(r,200,{ok:1})}
    return ER(r,400,'Aksi tidak dikenal')}
+  if(a==='sec'){if(!isRoot(u))return ER(r,403,'Hanya Owner utama');const sf=SECF();if(b.act==='set'){sf.qr=b.qr?1:0;sf.pk=b.pk?1:0;sf.maxq=Math.max(5,Math.min(10080,Math.floor(+b.maxq)||1440));alog(u,'keamanan login','qr='+sf.qr+' passkey='+sf.pk+' maks='+sf.maxq);sv()}
+   let pk=0,t2=0,qa=0;for(const x of Object.values(db.users)){pk+=(x.pk||[]).length;if(x.t2&&x.t2.on)t2++}for(const e of Object.values(db.qc||{}))if(e.exp>Date.now())qa++;return J(r,200,{...sf,pk_n:pk,t2_n:t2,qr_n:qa,tok_n:Object.keys(db.tok).length})}
   if(a==='fx'){if(!isRoot(u))return ER(r,403,'Hanya Owner utama');const cf=fxCfg(),act=b.act,N=(v,lo,hi)=>Math.max(lo,Math.min(hi,Math.floor(+v)||0));
    const out=()=>({mis:fxDefs(),ev:{...cf.ev,now:fxEvI()},sale:{...cf.sale,live:!!saleOn()},ref:cf.ref,rd:cf.rd,race:cf.race,vch:Object.entries(cf.vch).map(([k,v])=>({code:k,k:v.k,a:v.a,max:v.max||0,n:v.n||0,exp:v.exp||0,on:v.on?1:0}))});
    if(act==='mis'){for(const q of(Array.isArray(b.mis)?b.mis:[])){const d=FXMIS.find(x=>x.id===q.id);if(!d)continue;cf.mo[d.id]={g:N(q.g,1,1e6),a:N(q.a,0,1e6),on:q.on===0?0:1,r:q.r==='sal'?'sal':'coin'}}alog(u,'misi','ubah misi')}
